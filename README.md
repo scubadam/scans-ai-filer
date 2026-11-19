@@ -39,9 +39,14 @@ flowchart LR
 | Environment Variable | Default | Description |
 | :--- | :--- | :--- |
 | `STORAGE_PROVIDER` | `gdrive` | Storage backend (`gdrive`) |
-| `AI_PROVIDER` | `gemini` | AI classification backend (`gemini`) |
-| `GEMINI_API_KEY` | *(required)* | Paid-tier Gemini API key |
+| `AI_PROVIDER` | `gemini` | Default AI classification backend (`gemini`, `ollama`, `openai`) when `INBOX_ROUTES` is unset |
+| `INBOX_ROUTES` | *(unset)* | Optional multi-inbox routing, e.g. `Inbox:gemini,Inbox-Local:ollama` — route sensitive scans to a local VLM while keeping everyday scans on paid-tier Gemini |
+| `GEMINI_API_KEY` | *(required if using `gemini`)* | Paid-tier Gemini API key |
 | `GEMINI_MODEL` | `gemini-2.5-flash` | Gemini model name |
+| `OLLAMA_BASE_URL` | `http://ollama-service.default.svc.cluster.local:11434/v1` | Base URL for Ollama or any OpenAI-compatible Vision endpoint (`OPENAI_BASE_URL` also supported) |
+| `OLLAMA_MODEL` | `llava-phi3:latest` | Local VLM model name (`OPENAI_MODEL` also supported; e.g. `qwen2.5vl:3b`, `llava-phi3:latest`) |
+| `OLLAMA_API_KEY` | *(optional)* | Bearer token for OpenAI-compatible proxies (`OPENAI_API_KEY` also supported) |
+| `OLLAMA_TIMEOUT_SECONDS` | `180` | HTTP timeout for local VLM inference |
 | `GOOGLE_APPLICATION_CREDENTIALS` | `/etc/gdrive/gdrive-sa.json` | Path to Google Service Account JSON key |
 | `GDRIVE_SA_JSON` | *(optional)* | Inline Service Account JSON (alternative to file path) |
 | `SCANS_FOLDER_NAME` | `Scans` | Root folder name in storage |

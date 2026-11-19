@@ -201,7 +201,7 @@ func (f *Filer) processOne(ctx context.Context, item storage.InboxFile, opts Opt
 	docDate := strings.TrimSpace(analysis.DocumentDate)
 	summary := strings.TrimSpace(analysis.Summary)
 
-	description, props := buildSanitizedMetadata(category, subcategory, organization, docType, docDate, summary, analysis.IsTaxonomyMatch, encryptEnabled)
+	description, props := buildSanitizedMetadata(category, subcategory, organization, docType, docDate, summary, f.AI.Name(), analysis.IsTaxonomyMatch, encryptEnabled)
 
 	f.Logger.Info("classified document",
 		"taxonomy_match", analysis.IsTaxonomyMatch,
@@ -284,7 +284,7 @@ func deriveFallbackDate(item storage.InboxFile, now time.Time) string {
 }
 
 // buildSanitizedMetadata constructs plaintext-safe search description and properties (no PII/details).
-func buildSanitizedMetadata(category, subcategory, organization, docType, docDate, summary string, isMatch, encrypted bool) (string, map[string]string) {
+func buildSanitizedMetadata(category, subcategory, organization, docType, docDate, summary, aiProviderName string, isMatch, encrypted bool) (string, map[string]string) {
 	var tags []string
 	for _, raw := range []string{category, organization, docType, subcategory} {
 		if t := taxonomy.SanitizeTag(raw); t != "" {
@@ -308,6 +308,7 @@ func buildSanitizedMetadata(category, subcategory, organization, docType, docDat
 		"doc_type":         docType,
 		"doc_date":         docDate,
 		"processed_by":     "scans-ai-filer",
+		"ai_provider":      aiProviderName,
 		"taxonomy_matched": matched,
 	}
 	if encrypted {

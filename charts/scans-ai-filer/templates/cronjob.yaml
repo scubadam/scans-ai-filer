@@ -38,6 +38,22 @@ spec:
                   value: {{ .Values.config.aiProvider | quote }}
                 - name: GEMINI_MODEL
                   value: {{ .Values.config.geminiModel | quote }}
+                {{- if .Values.config.inboxRoutes }}
+                - name: INBOX_ROUTES
+                  value: {{ .Values.config.inboxRoutes | quote }}
+                {{- end }}
+                {{- if .Values.config.ollamaBaseUrl }}
+                - name: OLLAMA_BASE_URL
+                  value: {{ .Values.config.ollamaBaseUrl | quote }}
+                {{- end }}
+                {{- if .Values.config.ollamaModel }}
+                - name: OLLAMA_MODEL
+                  value: {{ .Values.config.ollamaModel | quote }}
+                {{- end }}
+                {{- if .Values.config.ollamaTimeoutSeconds }}
+                - name: OLLAMA_TIMEOUT_SECONDS
+                  value: {{ .Values.config.ollamaTimeoutSeconds | quote }}
+                {{- end }}
                 - name: SCANS_FOLDER_NAME
                   value: {{ .Values.config.scansFolderName | quote }}
                 - name: INBOX_FOLDER_NAME
@@ -63,6 +79,7 @@ spec:
                     secretKeyRef:
                       name: {{ include "scans-ai-filer.secretName" . }}
                       key: {{ .Values.secrets.geminiApiKeyKey }}
+                      optional: true
                 {{- if .Values.secrets.pdfPasswordKey }}
                 - name: PDF_PASSWORD
                   valueFrom:

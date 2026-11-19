@@ -18,6 +18,11 @@ config:
   storageProvider: "gdrive"
   aiProvider: "gemini"
   geminiModel: "gemini-2.5-flash"
+  # Optional multi-inbox routing, e.g. "Inbox:gemini,Inbox-Local:ollama"
+  inboxRoutes: ""
+  ollamaBaseUrl: "http://ollama-service.default.svc.cluster.local:11434/v1"
+  ollamaModel: "llava-phi3:latest"
+  ollamaTimeoutSeconds: 180
   scansFolderName: "Scans"
   inboxFolderName: "Inbox"
   batchSize: 15

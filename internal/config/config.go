@@ -7,6 +7,12 @@ import (
 	"strings"
 )
 
+// InboxRoute maps a storage inbox folder name to a specific AI provider (e.g. "Inbox:gemini", "Inbox-Local:ollama").
+type InboxRoute struct {
+	InboxFolder string
+	AIProvider  string
+}
+
 // Config holds runtime configuration for scans-ai-filer.
 type Config struct {
 	// Storage provider configuration
@@ -14,14 +20,21 @@ type Config struct {
 	ScansFolderName string
 	InboxFolderName string
 
+	// Multi-inbox routing (defaults to single route InboxFolderName -> AIProvider when INBOX_ROUTES is unset)
+	InboxRoutes []InboxRoute
+
 	// Google Drive credentials (file path or raw JSON)
 	GoogleCredentialsPath string
 	GoogleCredentialsJSON string
 
 	// AI provider configuration
-	AIProvider   string
-	GeminiAPIKey string
-	GeminiModel  string
+	AIProvider           string
+	GeminiAPIKey         string
+	GeminiModel          string
+	OllamaBaseURL        string
+	OllamaAPIKey         string
+	OllamaModel          string
+	OllamaTimeoutSeconds int
 
 	// Taxonomy and batch processing
 	TaxonomyCSVPath string
@@ -35,6 +48,29 @@ type Config struct {
 
 	// Optional sanitized webhook notification (compatible with Home Assistant webhooks)
 	WebhookURL string
+}
+
+// ParseInboxRoutes parses a comma-separated list of "FolderName:provider" pairs.
+func ParseInboxRoutes(raw string) ([]InboxRoute, error) {
+	var routes []InboxRoute
+	for _, entry := range strings.Split(raw, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		parts := strings.SplitN(entry, ":", 2)
+		if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
+			return nil, fmt.Errorf("invalid INBOX_ROUTES entry %q: expected 'FolderName:provider'", entry)
+		}
+		routes = append(routes, InboxRoute{
+			InboxFolder: strings.TrimSpace(parts[0]),
+			AIProvider:  strings.ToLower(strings.TrimSpace(parts[1])),
+		})
+	}
+	if len(routes) == 0 {
+		return nil, fmt.Errorf("INBOX_ROUTES did not contain any valid routes")
+	}
+	return routes, nil
 }
 
 // Load reads configuration from environment variables with sensible defaults.
@@ -57,6 +93,15 @@ func Load(dryRunFlag bool) (*Config, error) {
 		pauseSec = v
 	}
 
+	ollamaTimeout := 180
+	if raw := strings.TrimSpace(os.Getenv("OLLAMA_TIMEOUT_SECONDS")); raw != "" {
+		v, err := strconv.Atoi(raw)
+		if err != nil || v <= 0 {
+			return nil, fmt.Errorf("invalid OLLAMA_TIMEOUT_SECONDS %q: must be > 0", raw)
+		}
+		ollamaTimeout = v
+	}
+
 	dryRun := dryRunFlag
 	if !dryRun {
 		v := strings.ToLower(strings.TrimSpace(os.Getenv("DRY_RUN")))
@@ -65,19 +110,44 @@ func Load(dryRunFlag bool) (*Config, error) {
 
 	webhookURL := strings.TrimSpace(os.Getenv("WEBHOOK_URL"))
 	if webhookURL == "" {
-		// Backward-compatible env var name
 		webhookURL = strings.TrimSpace(os.Getenv("HA_WEBHOOK_URL"))
+	}
+
+	inboxFolder := envOrDefault("INBOX_FOLDER_NAME", "Inbox")
+	aiProvider := strings.ToLower(envOrDefault("AI_PROVIDER", "gemini"))
+
+	var routes []InboxRoute
+	if rawRoutes := strings.TrimSpace(os.Getenv("INBOX_ROUTES")); rawRoutes != "" {
+		parsed, err := ParseInboxRoutes(rawRoutes)
+		if err != nil {
+			return nil, err
+		}
+		routes = parsed
+	} else {
+		routes = []InboxRoute{{InboxFolder: inboxFolder, AIProvider: aiProvider}}
+	}
+
+	ollamaBaseURL := envOrDefault("OLLAMA_BASE_URL", envOrDefault("OPENAI_BASE_URL", "http://ollama-service.default.svc.cluster.local:11434/v1"))
+	ollamaModel := envOrDefault("OLLAMA_MODEL", envOrDefault("OPENAI_MODEL", "llava-phi3:latest"))
+	ollamaAPIKey := strings.TrimSpace(os.Getenv("OLLAMA_API_KEY"))
+	if ollamaAPIKey == "" {
+		ollamaAPIKey = strings.TrimSpace(os.Getenv("OPENAI_API_KEY"))
 	}
 
 	cfg := &Config{
 		StorageProvider:       envOrDefault("STORAGE_PROVIDER", "gdrive"),
 		ScansFolderName:       envOrDefault("SCANS_FOLDER_NAME", "Scans"),
-		InboxFolderName:       envOrDefault("INBOX_FOLDER_NAME", "Inbox"),
+		InboxFolderName:       inboxFolder,
+		InboxRoutes:           routes,
 		GoogleCredentialsPath: envOrDefault("GOOGLE_APPLICATION_CREDENTIALS", "/etc/gdrive/gdrive-sa.json"),
 		GoogleCredentialsJSON: strings.TrimSpace(os.Getenv("GDRIVE_SA_JSON")),
-		AIProvider:            envOrDefault("AI_PROVIDER", "gemini"),
+		AIProvider:            aiProvider,
 		GeminiAPIKey:          strings.TrimSpace(os.Getenv("GEMINI_API_KEY")),
 		GeminiModel:           envOrDefault("GEMINI_MODEL", "gemini-2.5-flash"),
+		OllamaBaseURL:         ollamaBaseURL,
+		OllamaAPIKey:          ollamaAPIKey,
+		OllamaModel:           ollamaModel,
+		OllamaTimeoutSeconds:  ollamaTimeout,
 		TaxonomyCSVPath:       strings.TrimSpace(os.Getenv("TAXONOMY_CSV_PATH")),
 		BatchSize:             batchSize,
 		PauseSeconds:          pauseSec,
@@ -93,7 +163,7 @@ func Load(dryRunFlag bool) (*Config, error) {
 	return cfg, nil
 }
 
-// Validate checks required settings for the chosen providers.
+// Validate checks required settings for all configured storage and AI providers.
 func (c *Config) Validate() error {
 	switch strings.ToLower(c.StorageProvider) {
 	case "gdrive":
@@ -104,13 +174,23 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("unsupported STORAGE_PROVIDER %q (supported: gdrive)", c.StorageProvider)
 	}
 
-	switch strings.ToLower(c.AIProvider) {
-	case "gemini":
-		if c.GeminiAPIKey == "" {
-			return fmt.Errorf("gemini AI provider requires GEMINI_API_KEY")
+	if len(c.InboxRoutes) == 0 {
+		return fmt.Errorf("at least one inbox route must be configured")
+	}
+
+	for _, r := range c.InboxRoutes {
+		switch strings.ToLower(r.AIProvider) {
+		case "gemini":
+			if c.GeminiAPIKey == "" {
+				return fmt.Errorf("route %q uses gemini AI provider which requires GEMINI_API_KEY", r.InboxFolder)
+			}
+		case "ollama", "openai":
+			if c.OllamaBaseURL == "" {
+				return fmt.Errorf("route %q uses %s AI provider which requires OLLAMA_BASE_URL", r.InboxFolder, r.AIProvider)
+			}
+		default:
+			return fmt.Errorf("unsupported AI provider %q in route %q (supported: gemini, ollama, openai)", r.AIProvider, r.InboxFolder)
 		}
-	default:
-		return fmt.Errorf("unsupported AI_PROVIDER %q (supported: gemini)", c.AIProvider)
 	}
 	return nil
 }
