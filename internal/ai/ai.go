@@ -15,6 +15,7 @@ type DocumentInput struct {
 	FallbackExt      string
 	FallbackDate     string
 	Taxonomy         []taxonomy.Rule
+	TaxonomyExamples []taxonomy.FilingExample
 }
 
 // FilingMetadata is the structured, PII-sanitized classification returned by an AI provider.
@@ -39,6 +40,9 @@ type Provider interface {
 // BuildClassificationPrompt generates the shared taxonomy-guided, PII-sanitized prompt.
 func BuildClassificationPrompt(input DocumentInput) string {
 	taxonomyText := taxonomy.FormatForPrompt(input.Taxonomy)
+	if exText := taxonomy.FormatExamplesForPrompt(input.TaxonomyExamples); exText != "" {
+		taxonomyText += "\n\n" + exText
+	}
 	return fmt.Sprintf(`You are an expert document archivist and personal filing assistant.
 Analyze this scanned document and extract structured, privacy-safe metadata for filing and categorization according to the provided TAXONOMY CATALOG.
 

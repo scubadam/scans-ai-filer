@@ -3,6 +3,8 @@ package storage
 import (
 	"context"
 	"time"
+
+	"github.com/scubadam/scans-ai-filer/internal/taxonomy"
 )
 
 // InboxFile represents a single unfiled document discovered in the inbox.
@@ -52,4 +54,10 @@ type Provider interface {
 	// sanitized metadata and permanently deletes origFileID from the inbox so no plaintext
 	// revision lingers in cloud version history.
 	FileEncryptedDocument(ctx context.Context, origFileID, destFolderID string, encryptedBytes []byte, mimeType string, meta FileMetadata) error
+}
+
+// FiledDocumentLister is an optional capability implemented by storage providers that
+// can walk already-filed documents under the scans root to bootstrap or diff a taxonomy store.
+type FiledDocumentLister interface {
+	ListFiledDocuments(ctx context.Context) ([]taxonomy.FiledDocument, error)
 }

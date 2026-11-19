@@ -18,6 +18,7 @@ import (
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
+	"github.com/scubadam/scans-ai-filer/internal/taxonomy"
 	"golang.org/x/image/draw"
 	_ "golang.org/x/image/webp"
 )
@@ -46,14 +47,16 @@ Do not invent information or speculate (e.g. do not call a plain passport scan a
 //  2. Stage 2 (Reduce): Send the combined extracted document text with the taxonomy catalog
 //     in a text-only classification call (zero vision VRAM) to produce strict FilingMetadata JSON.
 type OllamaOpenAIProvider struct {
-	BaseURL     string
-	APIKey      string
-	Model       string
-	TextModel   string
-	MaxPages    int
-	MaxImageDim int
-	HTTPClient  *http.Client
-	Logger      *slog.Logger
+	BaseURL       string
+	APIKey        string
+	Model         string
+	TextModel     string
+	MaxPages      int
+	MaxImageDim   int
+	TaxonomyStore taxonomy.Store
+	TopK          int
+	HTTPClient    *http.Client
+	Logger        *slog.Logger
 }
 
 // NewOllamaOpenAIProvider creates an OllamaOpenAIProvider with sensible defaults.
@@ -102,6 +105,22 @@ func (o *OllamaOpenAIProvider) AnalyzeDocument(ctx context.Context, input Docume
 	extractedText, err := o.extractDocumentText(ctx, input)
 	if err != nil {
 		return nil, err
+	}
+
+	// If a vector-backed TaxonomyStore is configured, retrieve only the top-K relevant rules
+	// and past PII-free filings so Stage 2 stays compact (~500 tokens) and accurate on local models.
+	if o.TaxonomyStore != nil {
+		topK := o.TopK
+		if topK <= 0 {
+			topK = 8
+		}
+		if sr, searchErr := o.TaxonomyStore.Search(ctx, extractedText, topK, 3); searchErr != nil {
+			o.Logger.Warn("semantic taxonomy search failed; falling back to full taxonomy", "err", searchErr)
+		} else if len(sr.Rules) > 0 || len(sr.Examples) > 0 {
+			input.Taxonomy = sr.Rules
+			input.TaxonomyExamples = sr.Examples
+			o.Logger.Info("retrieved semantic taxonomy context", "rules", len(sr.Rules), "examples", len(sr.Examples))
+		}
 	}
 
 	classifyPrompt := BuildClassificationPrompt(input) + `

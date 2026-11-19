@@ -26,6 +26,11 @@ config:
   ollamaMaxPages: 5
   ollamaMaxImageDim: 1536
   ollamaTimeoutSeconds: 300
+  # Optional pure-Go SQLite + vector search taxonomy store (set persistence.enabled=true to persist)
+  taxonomyDbPath: ""
+  embeddingProvider: "auto" # auto | ollama | gemini | none
+  embeddingModel: ""
+  taxonomyTopK: 8
   scansFolderName: "Scans"
   inboxFolderName: "Inbox"
   batchSize: 15

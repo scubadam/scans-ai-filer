@@ -39,11 +39,15 @@ type Config struct {
 	OllamaMaxPages       int
 	OllamaMaxImageDim    int
 
-	// Taxonomy and batch processing
-	TaxonomyCSVPath string
-	BatchSize       int
-	PauseSeconds    int
-	DryRun          bool
+	// Taxonomy, vector store, and batch processing
+	TaxonomyCSVPath   string
+	TaxonomyDBPath    string
+	EmbeddingProvider string
+	EmbeddingModel    string
+	TaxonomyTopK      int
+	BatchSize         int
+	PauseSeconds      int
+	DryRun            bool
 
 	// Optional AES-256 PDF password encryption before filing
 	PDFPassword      string
@@ -123,6 +127,15 @@ func Load(dryRunFlag bool) (*Config, error) {
 		ollamaMaxImageDim = v
 	}
 
+	taxonomyTopK := 8
+	if raw := strings.TrimSpace(os.Getenv("TAXONOMY_TOP_K")); raw != "" {
+		v, err := strconv.Atoi(raw)
+		if err != nil || v <= 0 {
+			return nil, fmt.Errorf("invalid TAXONOMY_TOP_K %q: must be > 0", raw)
+		}
+		taxonomyTopK = v
+	}
+
 	dryRun := dryRunFlag
 	if !dryRun {
 		v := strings.ToLower(strings.TrimSpace(os.Getenv("DRY_RUN")))
@@ -174,6 +187,10 @@ func Load(dryRunFlag bool) (*Config, error) {
 		OllamaMaxPages:        ollamaMaxPages,
 		OllamaMaxImageDim:     ollamaMaxImageDim,
 		TaxonomyCSVPath:       strings.TrimSpace(os.Getenv("TAXONOMY_CSV_PATH")),
+		TaxonomyDBPath:        strings.TrimSpace(os.Getenv("TAXONOMY_DB_PATH")),
+		EmbeddingProvider:     strings.ToLower(envOrDefault("EMBEDDING_PROVIDER", "auto")),
+		EmbeddingModel:        strings.TrimSpace(os.Getenv("EMBEDDING_MODEL")),
+		TaxonomyTopK:          taxonomyTopK,
 		BatchSize:             batchSize,
 		PauseSeconds:          pauseSec,
 		DryRun:                dryRun,
