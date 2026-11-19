@@ -50,6 +50,18 @@ spec:
                 - name: OLLAMA_MODEL
                   value: {{ .Values.config.ollamaModel | quote }}
                 {{- end }}
+                {{- if .Values.config.ollamaTextModel }}
+                - name: OLLAMA_TEXT_MODEL
+                  value: {{ .Values.config.ollamaTextModel | quote }}
+                {{- end }}
+                {{- if .Values.config.ollamaMaxPages }}
+                - name: OLLAMA_MAX_PAGES
+                  value: {{ .Values.config.ollamaMaxPages | quote }}
+                {{- end }}
+                {{- if .Values.config.ollamaMaxImageDim }}
+                - name: OLLAMA_MAX_IMAGE_DIM
+                  value: {{ .Values.config.ollamaMaxImageDim | quote }}
+                {{- end }}
                 {{- if .Values.config.ollamaTimeoutSeconds }}
                 - name: OLLAMA_TIMEOUT_SECONDS
                   value: {{ .Values.config.ollamaTimeoutSeconds | quote }}

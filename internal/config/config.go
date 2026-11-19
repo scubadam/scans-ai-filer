@@ -34,7 +34,10 @@ type Config struct {
 	OllamaBaseURL        string
 	OllamaAPIKey         string
 	OllamaModel          string
+	OllamaTextModel      string
 	OllamaTimeoutSeconds int
+	OllamaMaxPages       int
+	OllamaMaxImageDim    int
 
 	// Taxonomy and batch processing
 	TaxonomyCSVPath string
@@ -93,13 +96,31 @@ func Load(dryRunFlag bool) (*Config, error) {
 		pauseSec = v
 	}
 
-	ollamaTimeout := 180
+	ollamaTimeout := 300
 	if raw := strings.TrimSpace(os.Getenv("OLLAMA_TIMEOUT_SECONDS")); raw != "" {
 		v, err := strconv.Atoi(raw)
 		if err != nil || v <= 0 {
 			return nil, fmt.Errorf("invalid OLLAMA_TIMEOUT_SECONDS %q: must be > 0", raw)
 		}
 		ollamaTimeout = v
+	}
+
+	ollamaMaxPages := 5
+	if raw := strings.TrimSpace(os.Getenv("OLLAMA_MAX_PAGES")); raw != "" {
+		v, err := strconv.Atoi(raw)
+		if err != nil || v <= 0 {
+			return nil, fmt.Errorf("invalid OLLAMA_MAX_PAGES %q: must be > 0", raw)
+		}
+		ollamaMaxPages = v
+	}
+
+	ollamaMaxImageDim := 1536
+	if raw := strings.TrimSpace(os.Getenv("OLLAMA_MAX_IMAGE_DIM")); raw != "" {
+		v, err := strconv.Atoi(raw)
+		if err != nil || v < 0 {
+			return nil, fmt.Errorf("invalid OLLAMA_MAX_IMAGE_DIM %q: must be >= 0", raw)
+		}
+		ollamaMaxImageDim = v
 	}
 
 	dryRun := dryRunFlag
@@ -128,7 +149,8 @@ func Load(dryRunFlag bool) (*Config, error) {
 	}
 
 	ollamaBaseURL := envOrDefault("OLLAMA_BASE_URL", envOrDefault("OPENAI_BASE_URL", "http://ollama-service.default.svc.cluster.local:11434/v1"))
-	ollamaModel := envOrDefault("OLLAMA_MODEL", envOrDefault("OPENAI_MODEL", "llava-phi3:latest"))
+	ollamaModel := envOrDefault("OLLAMA_MODEL", envOrDefault("OPENAI_MODEL", "qwen2.5vl:3b"))
+	ollamaTextModel := strings.TrimSpace(os.Getenv("OLLAMA_TEXT_MODEL"))
 	ollamaAPIKey := strings.TrimSpace(os.Getenv("OLLAMA_API_KEY"))
 	if ollamaAPIKey == "" {
 		ollamaAPIKey = strings.TrimSpace(os.Getenv("OPENAI_API_KEY"))
@@ -147,7 +169,10 @@ func Load(dryRunFlag bool) (*Config, error) {
 		OllamaBaseURL:         ollamaBaseURL,
 		OllamaAPIKey:          ollamaAPIKey,
 		OllamaModel:           ollamaModel,
+		OllamaTextModel:       ollamaTextModel,
 		OllamaTimeoutSeconds:  ollamaTimeout,
+		OllamaMaxPages:        ollamaMaxPages,
+		OllamaMaxImageDim:     ollamaMaxImageDim,
 		TaxonomyCSVPath:       strings.TrimSpace(os.Getenv("TAXONOMY_CSV_PATH")),
 		BatchSize:             batchSize,
 		PauseSeconds:          pauseSec,

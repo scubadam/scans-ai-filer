@@ -37,13 +37,17 @@ func buildAI(cfg *config.Config, providerName string, logger *slog.Logger) (ai.P
 	case "gemini":
 		return ai.NewGeminiProvider(cfg.GeminiAPIKey, cfg.GeminiModel, logger), nil
 	case "ollama", "openai":
-		return ai.NewOllamaOpenAIProvider(
+		p := ai.NewOllamaOpenAIProvider(
 			cfg.OllamaBaseURL,
 			cfg.OllamaAPIKey,
 			cfg.OllamaModel,
 			time.Duration(cfg.OllamaTimeoutSeconds)*time.Second,
 			logger,
-		), nil
+		)
+		p.TextModel = cfg.OllamaTextModel
+		p.MaxPages = cfg.OllamaMaxPages
+		p.MaxImageDim = cfg.OllamaMaxImageDim
+		return p, nil
 	default:
 		return nil, fmt.Errorf("unsupported AI provider %q", providerName)
 	}
