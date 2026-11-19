@@ -103,3 +103,24 @@ func TestFilerRunAndDryRun(t *testing.T) {
 		t.Errorf("unexpected properties: %+v", store.lastMeta.Properties)
 	}
 }
+
+func TestNormalizeDateAndSanitizeFolderPath(t *testing.T) {
+	if got := normalizeDocumentDate("2026-11-19", "2026-01-01"); got != "2026-11-19" {
+		t.Errorf("expected ISO date preserved, got %q", got)
+	}
+	if got := normalizeDocumentDate("31/10/2018", "2026-01-01"); got != "2018-10-31" {
+		t.Errorf("expected UK date coerced to ISO, got %q", got)
+	}
+	if got := normalizeDocumentDate("13-03-40", "2026-11-19"); got != "2026-11-19" {
+		t.Errorf("expected ambiguous 2-digit year to fall back, got %q", got)
+	}
+	if got := sanitizeFolderPath("Personal/Identification/HMPO/{year}", "2026"); got != "Personal/Identification/HMPO/2026" {
+		t.Errorf("expected {year} substituted, got %q", got)
+	}
+	if got := sanitizeFolderPath("Utilities/Energy/Octopus/YYYY", "2026"); got != "Utilities/Energy/Octopus/2026" {
+		t.Errorf("expected YYYY substituted, got %q", got)
+	}
+	if got := sanitizeFolderPath("", "2026"); got != "Unsorted" {
+		t.Errorf("expected empty path -> Unsorted, got %q", got)
+	}
+}

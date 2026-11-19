@@ -17,7 +17,11 @@ import (
 	"github.com/scubadam/scans-ai-filer/internal/taxonomy"
 )
 
-var dateInFilenameRe = regexp.MustCompile(`(\d{4})[-_]?(\d{2})[-_]?(\d{2})`)
+var (
+	dateInFilenameRe      = regexp.MustCompile(`(\d{4})[-_]?(\d{2})[-_]?(\d{2})`)
+	leadingShortDateRe    = regexp.MustCompile(`^\d{1,2}[-/]\d{1,2}[-/]\d{2,4}(\s+-\s+)`)
+	leadingTemplateDateRe = regexp.MustCompile(`^(?i)(?:yyyy-mm-dd|\{date\})(\s+-\s+)`)
+)
 
 // Options configures a batch run of Filer.
 type Options struct {
@@ -176,9 +180,18 @@ func (f *Filer) processOne(ctx context.Context, item storage.InboxFile, opts Opt
 		return notify.FiledItem{}, false, fmt.Errorf("AI analysis: %w", err)
 	}
 
-	rawFilename := analysis.SuggestedFilename
-	if strings.TrimSpace(rawFilename) == "" {
+	docDate := normalizeDocumentDate(analysis.DocumentDate, fallbackDate)
+	docYear := docDate[:4]
+
+	rawFilename := strings.TrimSpace(analysis.SuggestedFilename)
+	if rawFilename == "" {
 		rawFilename = item.Name
+	}
+	// Replace non-ISO leading dates (e.g. "13-03-40 - ...") or literal placeholders ("YYYY-MM-DD - ...") with normalized YYYY-MM-DD
+	if leadingShortDateRe.MatchString(rawFilename) {
+		rawFilename = leadingShortDateRe.ReplaceAllString(rawFilename, docDate+"$1")
+	} else if leadingTemplateDateRe.MatchString(rawFilename) {
+		rawFilename = leadingTemplateDateRe.ReplaceAllString(rawFilename, docDate+"$1")
 	}
 	encryptEnabled := strings.TrimSpace(opts.PDFPassword) != ""
 	if encryptEnabled {
@@ -189,16 +202,12 @@ func (f *Filer) processOne(ctx context.Context, item storage.InboxFile, opts Opt
 	}
 	cleanFilename := taxonomy.SanitizeFilename(rawFilename, fallbackExt)
 
-	targetFolderPath := strings.TrimSpace(analysis.SuggestedFolderPath)
-	if targetFolderPath == "" {
-		targetFolderPath = "Unsorted"
-	}
+	targetFolderPath := sanitizeFolderPath(analysis.SuggestedFolderPath, docYear)
 
 	category := defaultString(analysis.Category, "General")
 	subcategory := strings.TrimSpace(analysis.Subcategory)
 	organization := defaultString(analysis.Organization, "Unknown")
 	docType := defaultString(analysis.DocumentType, "Document")
-	docDate := strings.TrimSpace(analysis.DocumentDate)
 	summary := strings.TrimSpace(analysis.Summary)
 
 	description, props := buildSanitizedMetadata(category, subcategory, organization, docType, docDate, summary, f.AI.Name(), analysis.IsTaxonomyMatch, encryptEnabled)
@@ -322,4 +331,70 @@ func defaultString(s, fallback string) string {
 		return t
 	}
 	return fallback
+}
+
+// normalizeDocumentDate coerces common 4-digit-year date strings into strict YYYY-MM-DD,
+// falling back to fallback (which is guaranteed YYYY-MM-DD) when the model returns an
+// ambiguous 2-digit year, template placeholder, or unparseable date.
+func normalizeDocumentDate(raw, fallback string) string {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return fallback
+	}
+	layouts := []string{
+		"2006-01-02",
+		"2006/01/02",
+		"02-01-2006",
+		"02/01/2006",
+		"2/1/2006",
+		"02 Jan 2006",
+		"2 Jan 2006",
+		"02 January 2006",
+		"2 January 2006",
+		"Jan 2, 2006",
+		"January 2, 2006",
+	}
+	for _, layout := range layouts {
+		if t, err := time.Parse(layout, s); err == nil {
+			if yr := t.Year(); yr >= 1900 && yr <= 2100 {
+				return t.Format("2006-01-02")
+			}
+		}
+	}
+	return fallback
+}
+
+// sanitizeFolderPath replaces literal template year placeholders (e.g. "{year}", "YYYY")
+// with the real 4-digit year and strips stray braces so smaller VLMs never create literal
+// placeholder folders in storage.
+func sanitizeFolderPath(rawPath, year string) string {
+	rawPath = strings.TrimSpace(rawPath)
+	if rawPath == "" {
+		return "Unsorted"
+	}
+	var cleaned []string
+	for _, seg := range strings.Split(rawPath, "/") {
+		seg = strings.TrimSpace(seg)
+		if seg == "" {
+			continue
+		}
+		switch strings.ToLower(seg) {
+		case "{year}", "{yyyy}", "yyyy", "<year>", "<yyyy>":
+			seg = year
+		default:
+			seg = strings.NewReplacer(
+				"{year}", year, "{YEAR}", year,
+				"{yyyy}", year, "{YYYY}", year,
+				"{", "", "}", "",
+			).Replace(seg)
+			seg = strings.TrimSpace(seg)
+		}
+		if seg != "" {
+			cleaned = append(cleaned, seg)
+		}
+	}
+	if len(cleaned) == 0 {
+		return "Unsorted"
+	}
+	return strings.Join(cleaned, "/")
 }
