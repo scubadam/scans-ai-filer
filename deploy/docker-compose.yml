@@ -1,0 +1,24 @@
+services:
+  scans-ai-filer:
+    image: ghcr.io/scubadam/scans-ai-filer:0.1.0
+    environment:
+      STORAGE_PROVIDER: gdrive
+      AI_PROVIDER: gemini
+      GEMINI_API_KEY: "${GEMINI_API_KEY}"
+      GEMINI_MODEL: gemini-2.5-flash
+      GOOGLE_APPLICATION_CREDENTIALS: /etc/gdrive/gdrive-sa.json
+      TAXONOMY_CSV_PATH: /etc/scans-ai-filer/taxonomy.csv
+      SCANS_FOLDER_NAME: Scans
+      INBOX_FOLDER_NAME: Inbox
+      BATCH_SIZE: "15"
+      DRY_RUN: "false"
+      # Optional: sanitized webhook notification (compatible with Home Assistant)
+      WEBHOOK_URL: "${WEBHOOK_URL:-}"
+    volumes:
+      - ./gdrive-sa.json:/etc/gdrive/gdrive-sa.json:ro
+      - ./taxonomy.csv:/etc/scans-ai-filer/taxonomy.csv:ro
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL

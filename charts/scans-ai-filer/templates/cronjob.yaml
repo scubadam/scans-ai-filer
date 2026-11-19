@@ -1,0 +1,104 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "scans-ai-filer.fullname" . }}
+  labels:
+    {{- include "scans-ai-filer.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.schedule | quote }}
+  concurrencyPolicy: {{ .Values.concurrencyPolicy }}
+  successfulJobsHistoryLimit: {{ .Values.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ .Values.failedJobsHistoryLimit }}
+  jobTemplate:
+    spec:
+      backoffLimit: {{ .Values.backoffLimit }}
+      activeDeadlineSeconds: {{ .Values.activeDeadlineSeconds }}
+      template:
+        metadata:
+          labels:
+            {{- include "scans-ai-filer.labels" . | nindent 12 }}
+        spec:
+          restartPolicy: OnFailure
+          {{- with .Values.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext:
+            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+          containers:
+            - name: {{ .Chart.Name }}
+              image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              securityContext:
+                {{- toYaml .Values.securityContext | nindent 16 }}
+              env:
+                - name: STORAGE_PROVIDER
+                  value: {{ .Values.config.storageProvider | quote }}
+                - name: AI_PROVIDER
+                  value: {{ .Values.config.aiProvider | quote }}
+                - name: GEMINI_MODEL
+                  value: {{ .Values.config.geminiModel | quote }}
+                - name: SCANS_FOLDER_NAME
+                  value: {{ .Values.config.scansFolderName | quote }}
+                - name: INBOX_FOLDER_NAME
+                  value: {{ .Values.config.inboxFolderName | quote }}
+                - name: BATCH_SIZE
+                  value: {{ .Values.config.batchSize | quote }}
+                - name: PAUSE_SECONDS
+                  value: {{ .Values.config.pauseSeconds | quote }}
+                - name: DRY_RUN
+                  value: {{ .Values.config.dryRun | quote }}
+                {{- if .Values.config.webhookUrl }}
+                - name: WEBHOOK_URL
+                  value: {{ .Values.config.webhookUrl | quote }}
+                {{- end }}
+                - name: GOOGLE_APPLICATION_CREDENTIALS
+                  value: "/etc/gdrive/{{ .Values.secrets.gdriveSaJsonKey }}"
+                {{- if or .Values.taxonomy.existingConfigMap .Values.taxonomy.inlineCsv }}
+                - name: TAXONOMY_CSV_PATH
+                  value: "/etc/scans-ai-filer/{{ .Values.taxonomy.key }}"
+                {{- end }}
+                - name: GEMINI_API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ include "scans-ai-filer.secretName" . }}
+                      key: {{ .Values.secrets.geminiApiKeyKey }}
+              resources:
+                {{- toYaml .Values.resources | nindent 16 }}
+              volumeMounts:
+                - name: gdrive-sa
+                  mountPath: /etc/gdrive
+                  readOnly: true
+                {{- if or .Values.taxonomy.existingConfigMap .Values.taxonomy.inlineCsv }}
+                - name: taxonomy
+                  mountPath: /etc/scans-ai-filer
+                  readOnly: true
+                {{- end }}
+          volumes:
+            - name: gdrive-sa
+              secret:
+                secretName: {{ include "scans-ai-filer.secretName" . }}
+                items:
+                  - key: {{ .Values.secrets.gdriveSaJsonKey }}
+                    path: {{ .Values.secrets.gdriveSaJsonKey }}
+            {{- if .Values.taxonomy.existingConfigMap }}
+            - name: taxonomy
+              configMap:
+                name: {{ .Values.taxonomy.existingConfigMap }}
+            {{- else if .Values.taxonomy.inlineCsv }}
+            - name: taxonomy
+              configMap:
+                name: {{ include "scans-ai-filer.fullname" . }}-taxonomy
+            {{- end }}
+          {{- with .Values.nodeSelector }}
+          nodeSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.affinity }}
+          affinity:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.tolerations }}
+          tolerations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}

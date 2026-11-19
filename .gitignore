@@ -1,0 +1,7 @@
+*.local.*
+.env
+.env.*
+!.env.example
+gdrive-sa.json
+*.tgz
+/scans-ai-filer

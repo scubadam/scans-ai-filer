@@ -1,0 +1,17 @@
+apiVersion: v2
+name: scans-ai-filer
+description: Privacy-first AI document archivist CronJob for scanned documents
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/scubadam/scans-ai-filer
+sources:
+  - https://github.com/scubadam/scans-ai-filer
+maintainers:
+  - name: scubadam
+keywords:
+  - scans
+  - gdrive
+  - ai
+  - archivist
+  - document-management

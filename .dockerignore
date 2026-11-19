@@ -1,0 +1,9 @@
+.git
+.github
+charts
+docs
+examples
+*.local.*
+.env*
+README.md
+LICENSE

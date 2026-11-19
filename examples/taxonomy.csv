@@ -1,0 +1,6 @@
+Category,Subcategory,Organization,Keywords,Path_Template,Description
+Finance,Banking,Example Bank,"example bank,current account,statement",Finance/Banking/Example Bank/{year},Bank statements and account notices
+Finance,Taxes,Tax Authority,"tax,revenue,self assessment,p60",Finance/Taxes/Tax Authority/{year},Tax returns and official tax notifications
+Housing,Insurance,Example Home Insurance,"home insurance,contents insurance,policy renewal",Housing/Insurance/Example Home Insurance/{year},Home and contents insurance policies
+Utilities,Energy,Example Energy Provider,"electricity,gas,utility bill,meter reading",Utilities/Energy/Example Energy Provider/{year},Electricity and gas utility statements
+Personal,General,Unidentified,"unidentified,blank scan,unknown",Personal/General/{year},Blank or unidentifiable scans

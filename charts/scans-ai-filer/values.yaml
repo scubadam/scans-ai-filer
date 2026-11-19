@@ -1,0 +1,68 @@
+image:
+  repository: ghcr.io/scubadam/scans-ai-filer
+  tag: "" # Defaults to Chart appVersion
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+schedule: "*/10 * * * *"
+concurrencyPolicy: Forbid
+successfulJobsHistoryLimit: 3
+failedJobsHistoryLimit: 3
+backoffLimit: 1
+activeDeadlineSeconds: 1800
+
+config:
+  storageProvider: "gdrive"
+  aiProvider: "gemini"
+  geminiModel: "gemini-2.5-flash"
+  scansFolderName: "Scans"
+  inboxFolderName: "Inbox"
+  batchSize: 15
+  pauseSeconds: 1
+  dryRun: false
+  webhookUrl: ""
+
+secrets:
+  # Recommended: manage credentials via SOPS/ExternalSecrets and reference existingSecret
+  existingSecret: ""
+  geminiApiKeyKey: "GEMINI_API_KEY"
+  gdriveSaJsonKey: "gdrive-sa.json"
+  # Inline values (only used when existingSecret is empty)
+  geminiApiKey: ""
+  gdriveSaJson: ""
+
+taxonomy:
+  # Optional: reference an existing ConfigMap containing a taxonomy.csv key
+  existingConfigMap: ""
+  key: "taxonomy.csv"
+  # Inline CSV content (used when existingConfigMap is empty and inlineCsv is non-empty)
+  inlineCsv: ""
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 32Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
