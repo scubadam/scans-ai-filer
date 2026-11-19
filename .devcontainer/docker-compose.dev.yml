@@ -1,0 +1,15 @@
+services:
+  app:
+    image: ${GO_DEV_IMAGE:-golang:1.27-bookworm}
+    working_dir: /workspace
+    volumes:
+      - ..:/workspace:cached
+      - go-cache:/go/pkg/mod
+    environment:
+      - STORAGE_PROVIDER=gdrive
+      - AI_PROVIDER=gemini
+      - DRY_RUN=true
+    command: sleep infinity
+
+volumes:
+  go-cache:

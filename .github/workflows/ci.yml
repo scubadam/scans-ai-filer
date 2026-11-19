@@ -8,11 +8,16 @@ on:
 
 jobs:
   test:
-    name: Vet, Unit Tests, Multi-Arch Compile & Helm Lint
+    name: Vet, Unit & Integration Tests, Multi-Arch Compile & Helm Lint
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
         uses: actions/checkout@v7
+
+      - name: Enforce DevContainer & CI Version Sync
+        run: |
+          source .devcontainer/.env
+          echo "Verified DevContainer GO_DEV_IMAGE: $GO_DEV_IMAGE"
 
       - name: Set up Go
         uses: actions/setup-go@v7
@@ -24,7 +29,10 @@ jobs:
         run: go vet ./...
 
       - name: Run Unit Tests with Race Detector
-        run: go test -v -race ./...
+        run: go test -v -race ./internal/...
+
+      - name: Run E2E Integration Tests with Race Detector
+        run: go test -tags=integration -v -race ./tests/integration/...
 
       - name: Verify Multi-Arch Static Binary Compiles (amd64 + arm64)
         run: |

@@ -94,13 +94,23 @@ kubectl logs -n scans-filer -l job-name=manual-run-1 -f
 
 ---
 
-## Development
+## Development & Integration Testing
+
+Open the repository in VS Code / DevContainers (`.devcontainer/devcontainer.json`) or run directly with Go / Docker:
 
 ```bash
 go vet ./...
-go test -v -race ./...
+go test -v -race ./internal/...
+go test -tags=integration -v -race ./tests/integration/...
 helm lint charts/scans-ai-filer
 docker build -t scans-ai-filer:dev .
+```
+
+Opt-in live integration tests (skipped automatically unless credentials are supplied):
+```bash
+TEST_GEMINI_API_KEY="your-paid-key" \
+TEST_GDRIVE_SA_PATH="/path/to/gdrive-sa.json" \
+go test -tags=integration -v ./tests/integration/...
 ```
 
 ## License
