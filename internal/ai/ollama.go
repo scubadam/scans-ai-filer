@@ -29,12 +29,12 @@ const (
 	defaultOllamaMaxImageDim = 1536
 )
 
-const pageExtractionPrompt = `Read this scanned document page carefully and extract all key information clearly in plain text:
-- Document date(s) (exact date printed on the letter, statement, invoice, or certificate)
-- Sender / Organization / Hospital / Company / Government body (exact letterhead name)
-- Document type (e.g. Appointment Letter, Bank Statement, Invoice, Policy Schedule, Tax Notice, Passport)
-- Key headings, subject, and a concise factual summary of the page content.
-Do not invent information not visible on the page. Keep the response concise and structured.`
+const pageExtractionPrompt = `Read this scanned document page carefully and extract key filing metadata in plain text:
+- Document issue date: ONLY the letter date, statement date, invoice date, or passport/ID Date of Issue (include the 4-digit year if visible, and label it clearly e.g. "Date of Issue: YYYY-MM-DD"). NEVER extract Date of Birth (DOB), expiry dates, or personal ID numbers.
+- Sender / Organization / Hospital / Company / Government body (exact letterhead name).
+- Document type (e.g. Appointment Letter, Bank Statement, Invoice, Policy Schedule, Tax Notice, Passport Bio Page).
+- Key headings, subject, and a concise factual summary of what the document actually is.
+Do not invent information or speculate (e.g. do not call a plain passport scan a "renewal" unless the page explicitly says renewal). Keep the response concise and structured.`
 
 // OllamaOpenAIProvider implements Provider for local Ollama or any OpenAI-compatible
 // /v1/chat/completions vision endpoint (Ollama, vLLM, LM Studio, LocalAI).
