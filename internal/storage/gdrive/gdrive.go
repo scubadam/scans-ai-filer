@@ -592,3 +592,80 @@ func (c *Client) purgePriorRevisions(ctx context.Context, fileID string) error {
 	}
 	return nil
 }
+
+// ListFiledDocuments walks the Scans folder hierarchy on Google Drive (skipping Inbox* and Unsorted)
+// and returns all already-filed documents with their relative folder paths and metadata.
+func (c *Client) ListFiledDocuments(ctx context.Context) ([]taxonomy.FiledDocument, error) {
+	if c.scansFolderID == "" {
+		return nil, fmt.Errorf("gdrive client not initialized; call Init first")
+	}
+
+	type queueItem struct {
+		id      string
+		relPath string
+	}
+	queue := []queueItem{{id: c.scansFolderID, relPath: ""}}
+	var out []taxonomy.FiledDocument
+
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+
+		pageToken := ""
+		for {
+			params := url.Values{}
+			params.Set("q", fmt.Sprintf("'%s' in parents and trashed = false", EscapeQuery(cur.id)))
+			params.Set("fields", "nextPageToken, files(id, name, mimeType, description, properties)")
+			params.Set("pageSize", "200")
+			params.Set("supportsAllDrives", "true")
+			params.Set("includeItemsFromAllDrives", "true")
+			if pageToken != "" {
+				params.Set("pageToken", pageToken)
+			}
+
+			var resp struct {
+				NextPageToken string `json:"nextPageToken"`
+				Files         []struct {
+					ID          string            `json:"id"`
+					Name        string            `json:"name"`
+					MimeType    string            `json:"mimeType"`
+					Description string            `json:"description"`
+					Properties  map[string]string `json:"properties"`
+				} `json:"files"`
+			}
+			if err := c.doJSON(ctx, http.MethodGet, "/files", params, nil, &resp); err != nil {
+				return nil, fmt.Errorf("list folder %q: %w", cur.relPath, err)
+			}
+
+			for _, f := range resp.Files {
+				if f.MimeType == "application/vnd.google-apps.folder" {
+					lower := strings.ToLower(strings.TrimSpace(f.Name))
+					if cur.relPath == "" && (strings.HasPrefix(lower, "inbox") || lower == "unsorted") {
+						continue
+					}
+					nextPath := f.Name
+					if cur.relPath != "" {
+						nextPath = cur.relPath + "/" + f.Name
+					}
+					queue = append(queue, queueItem{id: f.ID, relPath: nextPath})
+					continue
+				}
+				if cur.relPath == "" {
+					continue
+				}
+				out = append(out, taxonomy.FiledDocument{
+					FolderPath:  cur.relPath,
+					Name:        f.Name,
+					Description: f.Description,
+					Properties:  f.Properties,
+				})
+			}
+
+			if resp.NextPageToken == "" {
+				break
+			}
+			pageToken = resp.NextPageToken
+		}
+	}
+	return out, nil
+}

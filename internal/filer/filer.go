@@ -44,11 +44,12 @@ type Result struct {
 
 // Filer orchestrates downloading, AI classification, metadata sanitization, and filing.
 type Filer struct {
-	Storage  storage.Provider
-	AI       ai.Provider
-	Notifier notify.Notifier
-	Logger   *slog.Logger
-	Now      func() time.Time
+	Storage       storage.Provider
+	AI            ai.Provider
+	Notifier      notify.Notifier
+	TaxonomyStore taxonomy.Store
+	Logger        *slog.Logger
+	Now           func() time.Time
 }
 
 // Run executes a single filing batch.
@@ -273,6 +274,33 @@ func (f *Filer) processOne(ctx context.Context, item storage.InboxFile, opts Opt
 	}
 
 	f.Logger.Info("filed document successfully", "name", finalFilename, "folder", opts.ScansFolderName+"/"+targetFolderPath)
+
+	// Self-learning write-back: index strictly PII-free filing metadata into the taxonomy vector store
+	if f.TaxonomyStore != nil && !strings.EqualFold(targetFolderPath, "Unsorted") {
+		tplPath := templatizeFolderYear(targetFolderPath)
+		if err := f.TaxonomyStore.RecordFiling(ctx, taxonomy.FilingExample{
+			Category:     category,
+			Subcategory:  subcategory,
+			Organization: organization,
+			DocumentType: docType,
+			Summary:      summary,
+			FolderPath:   tplPath,
+		}); err != nil {
+			f.Logger.Warn("failed to record filing in taxonomy store", "err", err)
+		}
+		if !analysis.IsTaxonomyMatch && organization != "Unknown" {
+			if err := f.TaxonomyStore.UpsertRule(ctx, taxonomy.Rule{
+				Category:     category,
+				Subcategory:  subcategory,
+				Organization: organization,
+				Keywords:     docType,
+				PathTemplate: tplPath,
+			}, "learned"); err != nil {
+				f.Logger.Warn("failed to learn new taxonomy rule", "org", organization, "err", err)
+			}
+		}
+	}
+
 	return notify.FiledItem{
 		Filename: finalFilename,
 		Folder:   opts.ScansFolderName + "/" + targetFolderPath,
@@ -397,4 +425,14 @@ func sanitizeFolderPath(rawPath, year string) string {
 		return "Unsorted"
 	}
 	return strings.Join(cleaned, "/")
+}
+
+func templatizeFolderYear(folderPath string) string {
+	segs := strings.Split(folderPath, "/")
+	for i, s := range segs {
+		if taxonomy.IsYear(s) {
+			segs[i] = "{year}"
+		}
+	}
+	return strings.Join(segs, "/")
 }

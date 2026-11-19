@@ -66,6 +66,22 @@ spec:
                 - name: OLLAMA_TIMEOUT_SECONDS
                   value: {{ .Values.config.ollamaTimeoutSeconds | quote }}
                 {{- end }}
+                {{- if .Values.config.taxonomyDbPath }}
+                - name: TAXONOMY_DB_PATH
+                  value: {{ .Values.config.taxonomyDbPath | quote }}
+                {{- end }}
+                {{- if .Values.config.embeddingProvider }}
+                - name: EMBEDDING_PROVIDER
+                  value: {{ .Values.config.embeddingProvider | quote }}
+                {{- end }}
+                {{- if .Values.config.embeddingModel }}
+                - name: EMBEDDING_MODEL
+                  value: {{ .Values.config.embeddingModel | quote }}
+                {{- end }}
+                {{- if .Values.config.taxonomyTopK }}
+                - name: TAXONOMY_TOP_K
+                  value: {{ .Values.config.taxonomyTopK | quote }}
+                {{- end }}
                 - name: SCANS_FOLDER_NAME
                   value: {{ .Values.config.scansFolderName | quote }}
                 - name: INBOX_FOLDER_NAME
