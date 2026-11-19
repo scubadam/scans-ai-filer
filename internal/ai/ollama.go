@@ -144,6 +144,9 @@ IMPORTANT: Return ONLY a single valid JSON object (no markdown fences, no commen
 	if err := json.Unmarshal([]byte(rawJSON), &meta); err != nil {
 		return nil, fmt.Errorf("decode local AI JSON metadata (%q): %w", rawJSON, err)
 	}
+	if strings.TrimSpace(meta.Category) == "" && strings.TrimSpace(meta.Organization) == "" && strings.TrimSpace(meta.SuggestedFilename) == "" {
+		return nil, fmt.Errorf("local AI returned empty classification JSON (%q)", rawJSON)
+	}
 	return &meta, nil
 }
 
