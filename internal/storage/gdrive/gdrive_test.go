@@ -89,16 +89,21 @@ func TestGDriveWorkflow(t *testing.T) {
 			_, _ = w.Write([]byte(`{"id":"file-1","name":"ok"}`))
 			return
 
-		case r.URL.Path == "/upload/drive/v3/files" && r.Method == http.MethodPost:
+		case r.URL.Path == "/upload/drive/v3/files/file-1" && r.Method == http.MethodPatch:
 			if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/related;") {
 				uploadedMultipart = true
 			}
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"id":"enc-file-2","name":"encrypted.pdf"}`))
+			_, _ = w.Write([]byte(`{"id":"file-1","name":"encrypted.pdf"}`))
 			return
 
-		case r.URL.Path == "/drive/v3/files/file-1" && r.Method == http.MethodDelete:
-			deletedOrigID = "file-1"
+		case r.URL.Path == "/drive/v3/files/file-1/revisions" && r.Method == http.MethodGet:
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"revisions":[{"id":"rev-1"},{"id":"rev-2"}]}`))
+			return
+
+		case r.URL.Path == "/drive/v3/files/file-1/revisions/rev-1" && r.Method == http.MethodDelete:
+			deletedOrigID = "rev-1"
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
@@ -170,7 +175,7 @@ func TestGDriveWorkflow(t *testing.T) {
 	if !uploadedMultipart {
 		t.Errorf("expected multipart/related upload")
 	}
-	if deletedOrigID != "file-1" {
-		t.Errorf("expected original inbox file 'file-1' to be permanently deleted, got %q", deletedOrigID)
+	if deletedOrigID != "rev-1" {
+		t.Errorf("expected plaintext revision 'rev-1' to be purged, got %q", deletedOrigID)
 	}
 }

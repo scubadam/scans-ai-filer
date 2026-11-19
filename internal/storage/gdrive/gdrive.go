@@ -504,9 +504,10 @@ func (c *Client) FileDocument(ctx context.Context, fileID, destFolderID string, 
 	return c.doJSON(ctx, http.MethodPatch, "/files/"+url.PathEscape(fileID), params, body, nil)
 }
 
-// FileEncryptedDocument creates a brand-new encrypted file in destFolderID via multipart/related
-// upload and permanently deletes origFileID from the inbox so no plaintext revision lingers in
-// Google Drive version history.
+// FileEncryptedDocument overwrites origFileID in-place with encryptedBytes via a multipart
+// PATCH (so it uses the file owner's My Drive quota rather than the Service Account's 0 GB
+// quota), moves it to destFolderID with sanitized metadata, and permanently deletes all
+// prior plaintext revisions so no unencrypted version lingers in Google Drive history.
 func (c *Client) FileEncryptedDocument(ctx context.Context, origFileID, destFolderID string, encryptedBytes []byte, mimeType string, meta storage.FileMetadata) error {
 	tok, err := c.getAccessToken(ctx)
 	if err != nil {
@@ -517,7 +518,6 @@ func (c *Client) FileEncryptedDocument(ctx context.Context, origFileID, destFold
 	metadataJSON, err := json.Marshal(map[string]any{
 		"name":        meta.NewName,
 		"mimeType":    mimeType,
-		"parents":     []string{destFolderID},
 		"description": meta.Description,
 		"properties":  meta.Properties,
 	})
@@ -535,10 +535,14 @@ func (c *Client) FileEncryptedDocument(ctx context.Context, origFileID, destFold
 	uploadParams := url.Values{}
 	uploadParams.Set("uploadType", "multipart")
 	uploadParams.Set("supportsAllDrives", "true")
-	uploadParams.Set("fields", "id, name")
+	uploadParams.Set("fields", "id, name, parents")
+	uploadParams.Set("removeParents", c.inboxFolderID)
+	if destFolderID != "" && destFolderID != c.inboxFolderID {
+		uploadParams.Set("addParents", destFolderID)
+	}
 
-	uploadURL := strings.TrimRight(c.UploadBaseURL, "/") + "/files?" + uploadParams.Encode()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, uploadURL, &body)
+	uploadURL := strings.TrimRight(c.UploadBaseURL, "/") + "/files/" + url.PathEscape(origFileID) + "?" + uploadParams.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, uploadURL, &body)
 	if err != nil {
 		return err
 	}
@@ -547,7 +551,7 @@ func (c *Client) FileEncryptedDocument(ctx context.Context, origFileID, destFold
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("multipart upload failed: %w", err)
+		return fmt.Errorf("multipart encrypted update failed: %w", err)
 	}
 	respBytes, readErr := io.ReadAll(resp.Body)
 	resp.Body.Close()
@@ -555,19 +559,36 @@ func (c *Client) FileEncryptedDocument(ctx context.Context, origFileID, destFold
 		return fmt.Errorf("read upload response: %w", readErr)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("multipart upload returned HTTP %d: %s", resp.StatusCode, string(respBytes))
+		return fmt.Errorf("multipart encrypted update returned HTTP %d: %s", resp.StatusCode, string(respBytes))
 	}
 
-	var created driveFile
-	if err := json.Unmarshal(respBytes, &created); err != nil || created.ID == "" {
-		return fmt.Errorf("unexpected upload response (refusing to delete inbox original): %s", string(respBytes))
+	// Purge all prior (plaintext) revisions so only the encrypted head revision remains
+	if err := c.purgePriorRevisions(ctx, origFileID); err != nil {
+		c.Logger.Warn("encrypted file saved, but could not purge prior plaintext revision(s)", "file_id", origFileID, "err", err)
 	}
+	return nil
+}
 
-	// Permanently delete the unencrypted inbox file (skips Trash, leaves no plaintext revision)
-	delParams := url.Values{}
-	delParams.Set("supportsAllDrives", "true")
-	if err := c.doJSON(ctx, http.MethodDelete, "/files/"+url.PathEscape(origFileID), delParams, nil, nil); err != nil {
-		return fmt.Errorf("uploaded encrypted file %q but failed to delete inbox original %q: %w", created.ID, origFileID, err)
+func (c *Client) purgePriorRevisions(ctx context.Context, fileID string) error {
+	params := url.Values{}
+	params.Set("fields", "revisions(id)")
+	var revList struct {
+		Revisions []struct {
+			ID string `json:"id"`
+		} `json:"revisions"`
+	}
+	if err := c.doJSON(ctx, http.MethodGet, "/files/"+url.PathEscape(fileID)+"/revisions", params, nil, &revList); err != nil {
+		return err
+	}
+	if len(revList.Revisions) <= 1 {
+		return nil
+	}
+	// Delete every revision except the newest (last) encrypted revision
+	for _, rev := range revList.Revisions[:len(revList.Revisions)-1] {
+		if err := c.doJSON(ctx, http.MethodDelete, "/files/"+url.PathEscape(fileID)+"/revisions/"+url.PathEscape(rev.ID), nil, nil, nil); err != nil {
+			return fmt.Errorf("delete revision %q: %w", rev.ID, err)
+		}
+		c.Logger.Info("purged plaintext revision", "file_id", fileID, "revision_id", rev.ID)
 	}
 	return nil
 }

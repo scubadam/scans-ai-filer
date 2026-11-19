@@ -33,13 +33,15 @@ import (
 )
 
 type fakeDriveNode struct {
-	ID          string
-	Name        string
-	MimeType    string
-	Parents     []string
-	Bytes       []byte
-	Description string
-	Properties  map[string]string
+	ID              string
+	Name            string
+	MimeType        string
+	Parents         []string
+	Bytes           []byte
+	Description     string
+	Properties      map[string]string
+	Revisions       []string
+	PurgedRevisions []string
 }
 
 type fakeDriveState struct {
@@ -154,6 +156,20 @@ func (s *fakeDriveState) handler() http.Handler {
 			_ = json.NewEncoder(w).Encode(map[string]any{"id": id, "name": body.Name})
 			return
 
+		case strings.HasPrefix(r.URL.Path, "/drive/v3/files/") && strings.HasSuffix(r.URL.Path, "/revisions") && r.Method == http.MethodGet:
+			id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/drive/v3/files/"), "/revisions")
+			s.mu.Lock()
+			var revs []map[string]string
+			if n := s.nodes[id]; n != nil {
+				for _, rv := range n.Revisions {
+					revs = append(revs, map[string]string{"id": rv})
+				}
+			}
+			s.mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"revisions": revs})
+			return
+
 		case strings.HasPrefix(r.URL.Path, "/drive/v3/files/") && r.Method == http.MethodGet:
 			id := strings.TrimPrefix(r.URL.Path, "/drive/v3/files/")
 			s.mu.Lock()
@@ -205,7 +221,8 @@ func (s *fakeDriveState) handler() http.Handler {
 			_ = json.NewEncoder(w).Encode(map[string]any{"id": id, "name": body.Name})
 			return
 
-		case r.URL.Path == "/upload/drive/v3/files" && r.Method == http.MethodPost:
+		case strings.HasPrefix(r.URL.Path, "/upload/drive/v3/files/") && r.Method == http.MethodPatch:
+			id := strings.TrimPrefix(r.URL.Path, "/upload/drive/v3/files/")
 			_, params, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
@@ -215,7 +232,6 @@ func (s *fakeDriveState) handler() http.Handler {
 			var meta struct {
 				Name        string            `json:"name"`
 				MimeType    string            `json:"mimeType"`
-				Parents     []string          `json:"parents"`
 				Description string            `json:"description"`
 				Properties  map[string]string `json:"properties"`
 			}
@@ -226,27 +242,53 @@ func (s *fakeDriveState) handler() http.Handler {
 			if p2, err := mr.NextPart(); err == nil {
 				fileBytes, _ = io.ReadAll(p2)
 			}
+			addParent := r.URL.Query().Get("addParents")
+			removeParent := r.URL.Query().Get("removeParents")
 			s.mu.Lock()
-			s.nextID++
-			id := fmt.Sprintf("enc-%d", s.nextID)
-			s.nodes[id] = &fakeDriveNode{
-				ID:          id,
-				Name:        meta.Name,
-				MimeType:    meta.MimeType,
-				Parents:     meta.Parents,
-				Bytes:       fileBytes,
-				Description: meta.Description,
-				Properties:  meta.Properties,
+			if n := s.nodes[id]; n != nil {
+				n.Name = meta.Name
+				n.MimeType = meta.MimeType
+				n.Bytes = fileBytes
+				n.Description = meta.Description
+				n.Properties = meta.Properties
+				n.Revisions = []string{"rev-1-plaintext", "rev-2-encrypted"}
+				var newParents []string
+				for _, p := range n.Parents {
+					if p != removeParent {
+						newParents = append(newParents, p)
+					}
+				}
+				if addParent != "" {
+					newParents = append(newParents, addParent)
+				}
+				n.Parents = newParents
 			}
 			s.mu.Unlock()
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{"id": id, "name": meta.Name})
 			return
 
-		case strings.HasPrefix(r.URL.Path, "/drive/v3/files/") && r.Method == http.MethodDelete:
-			id := strings.TrimPrefix(r.URL.Path, "/drive/v3/files/")
+		case strings.HasPrefix(r.URL.Path, "/drive/v3/files/") && strings.HasSuffix(r.URL.Path, "/revisions") && r.Method == http.MethodGet:
+			id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/drive/v3/files/"), "/revisions")
 			s.mu.Lock()
-			delete(s.nodes, id)
+			var revs []map[string]string
+			if n := s.nodes[id]; n != nil {
+				for _, rv := range n.Revisions {
+					revs = append(revs, map[string]string{"id": rv})
+				}
+			}
+			s.mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"revisions": revs})
+			return
+
+		case strings.HasPrefix(r.URL.Path, "/drive/v3/files/") && strings.Contains(r.URL.Path, "/revisions/") && r.Method == http.MethodDelete:
+			rest := strings.TrimPrefix(r.URL.Path, "/drive/v3/files/")
+			parts := strings.SplitN(rest, "/revisions/", 2)
+			s.mu.Lock()
+			if n := s.nodes[parts[0]]; n != nil && len(parts) == 2 {
+				n.PurgedRevisions = append(n.PurgedRevisions, parts[1])
+			}
 			s.mu.Unlock()
 			w.WriteHeader(http.StatusNoContent)
 			return
@@ -474,21 +516,16 @@ func TestPipelineE2EEncryptedPDFAndPlaintextDeletion(t *testing.T) {
 		t.Fatalf("unexpected result: %+v", res)
 	}
 
-	// Plaintext inbox original MUST be permanently deleted
-	if _, stillExists := driveState.nodes["inbox-img"]; stillExists {
-		t.Fatalf("plaintext inbox-img was not permanently deleted")
-	}
-
-	// Find newly uploaded encrypted PDF
-	var encNode *fakeDriveNode
-	for id, n := range driveState.nodes {
-		if strings.HasPrefix(id, "enc-") {
-			encNode = n
-			break
-		}
-	}
+	// Verify file was moved out of Inbox, overwritten with AES-256 PDF, and plaintext revision purged
+	encNode := driveState.nodes["inbox-img"]
 	if encNode == nil {
-		t.Fatalf("encrypted PDF node not found in drive state")
+		t.Fatalf("expected inbox-img node to be updated in-place")
+	}
+	if contains(encNode.Parents, "inbox-dir") {
+		t.Errorf("file still in Inbox after encrypted filing")
+	}
+	if !contains(encNode.PurgedRevisions, "rev-1-plaintext") {
+		t.Errorf("expected plaintext revision rev-1-plaintext to be purged, got %v", encNode.PurgedRevisions)
 	}
 	if !strings.HasSuffix(encNode.Name, ".pdf") {
 		t.Errorf("expected .pdf extension after image wrapping, got %q", encNode.Name)
