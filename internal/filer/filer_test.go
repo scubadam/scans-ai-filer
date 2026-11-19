@@ -12,13 +12,15 @@ import (
 )
 
 type mockStorage struct {
-	files      []storage.InboxFile
-	filedCalls int
-	lastMeta   storage.FileMetadata
+	files          []storage.InboxFile
+	filedCalls     int
+	encryptedCalls int
+	lastMeta       storage.FileMetadata
+	lastEncrypted  []byte
 }
 
-func (m *mockStorage) Name() string                      { return "mock" }
-func (m *mockStorage) Init(context.Context) error        { return nil }
+func (m *mockStorage) Name() string               { return "mock" }
+func (m *mockStorage) Init(context.Context) error { return nil }
 func (m *mockStorage) ListInbox(context.Context, int) ([]storage.InboxFile, error) {
 	return m.files, nil
 }
@@ -32,6 +34,12 @@ func (m *mockStorage) ResolveUniqueFilename(_ context.Context, _, name string) (
 }
 func (m *mockStorage) FileDocument(_ context.Context, _, _ string, meta storage.FileMetadata) error {
 	m.filedCalls++
+	m.lastMeta = meta
+	return nil
+}
+func (m *mockStorage) FileEncryptedDocument(_ context.Context, _, _ string, encryptedBytes []byte, _ string, meta storage.FileMetadata) error {
+	m.encryptedCalls++
+	m.lastEncrypted = encryptedBytes
 	m.lastMeta = meta
 	return nil
 }

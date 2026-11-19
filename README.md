@@ -50,6 +50,8 @@ flowchart LR
 | `BATCH_SIZE` | `10` | Max documents processed per run |
 | `PAUSE_SECONDS` | `1` | Delay between documents in a batch |
 | `DRY_RUN` | `false` | Classify and log without modifying storage or sending webhooks (also `--dry-run`) |
+| `PDF_PASSWORD` | *(empty)* | Optional AES-256 PDF password. When set, PDFs are encrypted (and image scans wrapped into encrypted PDFs), uploaded as new files, and plaintext Inbox originals are permanently deleted so no unencrypted version history remains in Drive. |
+| `PDF_OWNER_PASSWORD` | *(defaults to `PDF_PASSWORD`)* | Optional PDF owner password when `PDF_PASSWORD` is enabled |
 | `WEBHOOK_URL` | *(empty)* | Optional JSON webhook URL (compatible with Home Assistant webhooks; `HA_WEBHOOK_URL` also supported) |
 
 ---

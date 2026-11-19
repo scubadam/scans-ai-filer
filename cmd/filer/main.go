@@ -76,11 +76,13 @@ func main() {
 	}
 
 	_, err = f.Run(ctx, filer.Options{
-		ScansFolderName: cfg.ScansFolderName,
-		BatchSize:       cfg.BatchSize,
-		PauseDuration:   time.Duration(cfg.PauseSeconds) * time.Second,
-		DryRun:          cfg.DryRun,
-		Taxonomy:        rules,
+		ScansFolderName:  cfg.ScansFolderName,
+		BatchSize:        cfg.BatchSize,
+		PauseDuration:    time.Duration(cfg.PauseSeconds) * time.Second,
+		DryRun:           cfg.DryRun,
+		PDFPassword:      cfg.PDFPassword,
+		PDFOwnerPassword: cfg.PDFOwnerPassword,
+		Taxonomy:         rules,
 	})
 	if err != nil {
 		logger.Error("filing batch failed", "err", err)

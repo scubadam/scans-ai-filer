@@ -29,6 +29,10 @@ type Config struct {
 	PauseSeconds    int
 	DryRun          bool
 
+	// Optional AES-256 PDF password encryption before filing
+	PDFPassword      string
+	PDFOwnerPassword string
+
 	// Optional sanitized webhook notification (compatible with Home Assistant webhooks)
 	WebhookURL string
 }
@@ -78,6 +82,8 @@ func Load(dryRunFlag bool) (*Config, error) {
 		BatchSize:             batchSize,
 		PauseSeconds:          pauseSec,
 		DryRun:                dryRun,
+		PDFPassword:           strings.TrimSpace(os.Getenv("PDF_PASSWORD")),
+		PDFOwnerPassword:      strings.TrimSpace(os.Getenv("PDF_OWNER_PASSWORD")),
 		WebhookURL:            webhookURL,
 	}
 

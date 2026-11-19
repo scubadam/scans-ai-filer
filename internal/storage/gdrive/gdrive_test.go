@@ -37,6 +37,8 @@ func generateTestSAJSON(t *testing.T, tokenURL string) []byte {
 func TestGDriveWorkflow(t *testing.T) {
 	var patchedBody map[string]any
 	var patchedQuery string
+	var uploadedMultipart bool
+	var deletedOrigID string
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -86,6 +88,19 @@ func TestGDriveWorkflow(t *testing.T) {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"id":"file-1","name":"ok"}`))
 			return
+
+		case r.URL.Path == "/upload/drive/v3/files" && r.Method == http.MethodPost:
+			if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/related;") {
+				uploadedMultipart = true
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"enc-file-2","name":"encrypted.pdf"}`))
+			return
+
+		case r.URL.Path == "/drive/v3/files/file-1" && r.Method == http.MethodDelete:
+			deletedOrigID = "file-1"
+			w.WriteHeader(http.StatusNoContent)
+			return
 		}
 		http.NotFound(w, r)
 	}))
@@ -97,6 +112,7 @@ func TestGDriveWorkflow(t *testing.T) {
 		t.Fatalf("NewFromJSON failed: %v", err)
 	}
 	client.BaseURL = srv.URL + "/drive/v3"
+	client.UploadBaseURL = srv.URL + "/upload/drive/v3"
 
 	ctx := context.Background()
 	if err := client.Init(ctx); err != nil {
@@ -141,5 +157,20 @@ func TestGDriveWorkflow(t *testing.T) {
 	}
 	if patchedBody["name"] != unique {
 		t.Errorf("unexpected patched name: %v", patchedBody["name"])
+	}
+
+	err = client.FileEncryptedDocument(ctx, "file-1", destID, []byte("%PDF-1.7 encrypted"), "application/pdf", storage.FileMetadata{
+		NewName:     unique,
+		Description: "Category: Finance",
+		Properties:  map[string]string{"encrypted": "aes-256"},
+	})
+	if err != nil {
+		t.Fatalf("FileEncryptedDocument failed: %v", err)
+	}
+	if !uploadedMultipart {
+		t.Errorf("expected multipart/related upload")
+	}
+	if deletedOrigID != "file-1" {
+		t.Errorf("expected original inbox file 'file-1' to be permanently deleted, got %q", deletedOrigID)
 	}
 }

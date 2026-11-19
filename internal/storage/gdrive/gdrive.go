@@ -27,9 +27,10 @@ import (
 )
 
 const (
-	defaultDriveBaseURL = "https://www.googleapis.com/drive/v3"
-	defaultTokenURL     = "https://oauth2.googleapis.com/token"
-	driveScope          = "https://www.googleapis.com/auth/drive"
+	defaultDriveBaseURL       = "https://www.googleapis.com/drive/v3"
+	defaultDriveUploadBaseURL = "https://www.googleapis.com/upload/drive/v3"
+	defaultTokenURL           = "https://oauth2.googleapis.com/token"
+	driveScope                = "https://www.googleapis.com/auth/drive"
 )
 
 // ServiceAccountKey mirrors the JSON fields of a Google Service Account key file.
@@ -46,10 +47,11 @@ type Client struct {
 	scansFolderName string
 	inboxFolderName string
 
-	BaseURL    string
-	TokenURL   string
-	HTTPClient *http.Client
-	Logger     *slog.Logger
+	BaseURL       string
+	UploadBaseURL string
+	TokenURL      string
+	HTTPClient    *http.Client
+	Logger        *slog.Logger
 
 	scansFolderID string
 	inboxFolderID string
@@ -97,6 +99,7 @@ func NewFromJSON(raw []byte, scansFolder, inboxFolder string, logger *slog.Logge
 		scansFolderName: scansFolder,
 		inboxFolderName: inboxFolder,
 		BaseURL:         defaultDriveBaseURL,
+		UploadBaseURL:   defaultDriveUploadBaseURL,
 		TokenURL:        tokenURL,
 		HTTPClient:      &http.Client{Timeout: 60 * time.Second},
 		Logger:          logger,
@@ -499,4 +502,72 @@ func (c *Client) FileDocument(ctx context.Context, fileID, destFolderID string, 
 		"properties":  meta.Properties,
 	}
 	return c.doJSON(ctx, http.MethodPatch, "/files/"+url.PathEscape(fileID), params, body, nil)
+}
+
+// FileEncryptedDocument creates a brand-new encrypted file in destFolderID via multipart/related
+// upload and permanently deletes origFileID from the inbox so no plaintext revision lingers in
+// Google Drive version history.
+func (c *Client) FileEncryptedDocument(ctx context.Context, origFileID, destFolderID string, encryptedBytes []byte, mimeType string, meta storage.FileMetadata) error {
+	tok, err := c.getAccessToken(ctx)
+	if err != nil {
+		return err
+	}
+
+	const boundary = "scans_ai_filer_multipart_boundary_7f9a2c"
+	metadataJSON, err := json.Marshal(map[string]any{
+		"name":        meta.NewName,
+		"mimeType":    mimeType,
+		"parents":     []string{destFolderID},
+		"description": meta.Description,
+		"properties":  meta.Properties,
+	})
+	if err != nil {
+		return fmt.Errorf("marshal upload metadata: %w", err)
+	}
+
+	var body bytes.Buffer
+	fmt.Fprintf(&body, "--%s\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n", boundary)
+	body.Write(metadataJSON)
+	fmt.Fprintf(&body, "\r\n--%s\r\nContent-Type: %s\r\n\r\n", boundary, mimeType)
+	body.Write(encryptedBytes)
+	fmt.Fprintf(&body, "\r\n--%s--\r\n", boundary)
+
+	uploadParams := url.Values{}
+	uploadParams.Set("uploadType", "multipart")
+	uploadParams.Set("supportsAllDrives", "true")
+	uploadParams.Set("fields", "id, name")
+
+	uploadURL := strings.TrimRight(c.UploadBaseURL, "/") + "/files?" + uploadParams.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, uploadURL, &body)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+tok)
+	req.Header.Set("Content-Type", "multipart/related; boundary="+boundary)
+
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("multipart upload failed: %w", err)
+	}
+	respBytes, readErr := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if readErr != nil {
+		return fmt.Errorf("read upload response: %w", readErr)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("multipart upload returned HTTP %d: %s", resp.StatusCode, string(respBytes))
+	}
+
+	var created driveFile
+	if err := json.Unmarshal(respBytes, &created); err != nil || created.ID == "" {
+		return fmt.Errorf("unexpected upload response (refusing to delete inbox original): %s", string(respBytes))
+	}
+
+	// Permanently delete the unencrypted inbox file (skips Trash, leaves no plaintext revision)
+	delParams := url.Values{}
+	delParams.Set("supportsAllDrives", "true")
+	if err := c.doJSON(ctx, http.MethodDelete, "/files/"+url.PathEscape(origFileID), delParams, nil, nil); err != nil {
+		return fmt.Errorf("uploaded encrypted file %q but failed to delete inbox original %q: %w", created.ID, origFileID, err)
+	}
+	return nil
 }

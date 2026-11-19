@@ -3,6 +3,7 @@
 package integration
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
@@ -10,6 +11,12 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"image"
+	"image/color"
+	"image/png"
+	"io"
+	"mime"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
@@ -20,6 +27,7 @@ import (
 	"github.com/scubadam/scans-ai-filer/internal/ai"
 	"github.com/scubadam/scans-ai-filer/internal/filer"
 	"github.com/scubadam/scans-ai-filer/internal/notify"
+	"github.com/scubadam/scans-ai-filer/internal/pdfenc"
 	"github.com/scubadam/scans-ai-filer/internal/storage/gdrive"
 	"github.com/scubadam/scans-ai-filer/internal/taxonomy"
 )
@@ -196,6 +204,52 @@ func (s *fakeDriveState) handler() http.Handler {
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{"id": id, "name": body.Name})
 			return
+
+		case r.URL.Path == "/upload/drive/v3/files" && r.Method == http.MethodPost:
+			_, params, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			mr := multipart.NewReader(r.Body, params["boundary"])
+			var meta struct {
+				Name        string            `json:"name"`
+				MimeType    string            `json:"mimeType"`
+				Parents     []string          `json:"parents"`
+				Description string            `json:"description"`
+				Properties  map[string]string `json:"properties"`
+			}
+			var fileBytes []byte
+			if p1, err := mr.NextPart(); err == nil {
+				_ = json.NewDecoder(p1).Decode(&meta)
+			}
+			if p2, err := mr.NextPart(); err == nil {
+				fileBytes, _ = io.ReadAll(p2)
+			}
+			s.mu.Lock()
+			s.nextID++
+			id := fmt.Sprintf("enc-%d", s.nextID)
+			s.nodes[id] = &fakeDriveNode{
+				ID:          id,
+				Name:        meta.Name,
+				MimeType:    meta.MimeType,
+				Parents:     meta.Parents,
+				Bytes:       fileBytes,
+				Description: meta.Description,
+				Properties:  meta.Properties,
+			}
+			s.mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": id, "name": meta.Name})
+			return
+
+		case strings.HasPrefix(r.URL.Path, "/drive/v3/files/") && r.Method == http.MethodDelete:
+			id := strings.TrimPrefix(r.URL.Path, "/drive/v3/files/")
+			s.mu.Lock()
+			delete(s.nodes, id)
+			s.mu.Unlock()
+			w.WriteHeader(http.StatusNoContent)
+			return
 		}
 		http.NotFound(w, r)
 	})
@@ -341,5 +395,111 @@ func TestPipelineE2EStatefulDriveGeminiWebhook(t *testing.T) {
 	}
 	if webhookPayload == nil || webhookPayload["count"] != float64(2) {
 		t.Errorf("unexpected webhook payload: %+v", webhookPayload)
+	}
+}
+
+func TestPipelineE2EEncryptedPDFAndPlaintextDeletion(t *testing.T) {
+	// Generate a real PNG scan in memory
+	img := image.NewRGBA(image.Rect(0, 0, 24, 24))
+	for y := 0; y < 24; y++ {
+		for x := 0; x < 24; x++ {
+			img.Set(x, y, color.RGBA{R: 50, G: 150, B: 220, A: 255})
+		}
+	}
+	var pngBuf bytes.Buffer
+	if err := png.Encode(&pngBuf, img); err != nil {
+		t.Fatalf("encode png: %v", err)
+	}
+
+	driveState := newFakeDriveState()
+	delete(driveState.nodes, "inbox-1")
+	delete(driveState.nodes, "inbox-2")
+	driveState.nodes["inbox-img"] = &fakeDriveNode{
+		ID:       "inbox-img",
+		Name:     "photo_scan.png",
+		MimeType: "image/png",
+		Parents:  []string{"inbox-dir"},
+		Bytes:    pngBuf.Bytes(),
+	}
+
+	driveSrv := httptest.NewServer(driveState.handler())
+	defer driveSrv.Close()
+
+	geminiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		metaBytes, _ := json.Marshal(ai.FilingMetadata{
+			DocumentDate:        "2026-11-19",
+			Organization:        "Example Bank",
+			DocumentType:        "Bank Statement",
+			Category:            "Finance",
+			Subcategory:         "Banking",
+			Summary:             "Annual Notice",
+			SuggestedFilename:   "2026-11-19 - Example Bank - Bank Statement - Annual Notice.png",
+			SuggestedFolderPath: "Finance/Example Bank/2026",
+			IsTaxonomyMatch:     true,
+		})
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"candidates": []any{
+				map[string]any{
+					"content": map[string]any{
+						"parts": []any{map[string]any{"text": string(metaBytes)}},
+					},
+				},
+			},
+		})
+	}))
+	defer geminiSrv.Close()
+
+	store, err := gdrive.NewFromJSON(generateTestSA(t, driveSrv.URL+"/token"), "Scans", "Inbox", nil)
+	if err != nil {
+		t.Fatalf("NewFromJSON: %v", err)
+	}
+	store.BaseURL = driveSrv.URL + "/drive/v3"
+	store.UploadBaseURL = driveSrv.URL + "/upload/drive/v3"
+
+	gem := ai.NewGeminiProvider("test-key", "gemini-2.5-flash", nil)
+	gem.BaseURL = geminiSrv.URL
+
+	const pdfPass = "SuperSecretScanVault2026!"
+	f := &filer.Filer{Storage: store, AI: gem}
+	res, err := f.Run(context.Background(), filer.Options{
+		ScansFolderName: "Scans",
+		BatchSize:       5,
+		PDFPassword:     pdfPass,
+	})
+	if err != nil {
+		t.Fatalf("Filer.Run encrypted failed: %v", err)
+	}
+	if res.Succeeded != 1 || res.Failed != 0 {
+		t.Fatalf("unexpected result: %+v", res)
+	}
+
+	// Plaintext inbox original MUST be permanently deleted
+	if _, stillExists := driveState.nodes["inbox-img"]; stillExists {
+		t.Fatalf("plaintext inbox-img was not permanently deleted")
+	}
+
+	// Find newly uploaded encrypted PDF
+	var encNode *fakeDriveNode
+	for id, n := range driveState.nodes {
+		if strings.HasPrefix(id, "enc-") {
+			encNode = n
+			break
+		}
+	}
+	if encNode == nil {
+		t.Fatalf("encrypted PDF node not found in drive state")
+	}
+	if !strings.HasSuffix(encNode.Name, ".pdf") {
+		t.Errorf("expected .pdf extension after image wrapping, got %q", encNode.Name)
+	}
+	if encNode.Properties["encrypted"] != "aes-256" {
+		t.Errorf("expected encrypted=aes-256 property, got %+v", encNode.Properties)
+	}
+	if _, err := pdfenc.DecryptDocument(context.Background(), encNode.Bytes, "wrong"); err == nil {
+		t.Errorf("expected wrong password to fail decryption")
+	}
+	if _, err := pdfenc.DecryptDocument(context.Background(), encNode.Bytes, pdfPass); err != nil {
+		t.Errorf("expected valid password to decrypt uploaded PDF: %v", err)
 	}
 }

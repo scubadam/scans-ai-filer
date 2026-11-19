@@ -47,4 +47,9 @@ type Provider interface {
 
 	// FileDocument moves a document from the inbox to destFolderID and applies sanitized metadata.
 	FileDocument(ctx context.Context, fileID, destFolderID string, meta FileMetadata) error
+
+	// FileEncryptedDocument uploads encryptedBytes as a brand-new file in destFolderID with
+	// sanitized metadata and permanently deletes origFileID from the inbox so no plaintext
+	// revision lingers in cloud version history.
+	FileEncryptedDocument(ctx context.Context, origFileID, destFolderID string, encryptedBytes []byte, mimeType string, meta FileMetadata) error
 }

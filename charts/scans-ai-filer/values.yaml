@@ -30,9 +30,12 @@ secrets:
   existingSecret: ""
   geminiApiKeyKey: "GEMINI_API_KEY"
   gdriveSaJsonKey: "gdrive-sa.json"
+  # Optional: key in existingSecret holding the AES-256 PDF encryption passphrase
+  pdfPasswordKey: "PDF_PASSWORD"
   # Inline values (only used when existingSecret is empty)
   geminiApiKey: ""
   gdriveSaJson: ""
+  pdfPassword: ""
 
 taxonomy:
   # Optional: reference an existing ConfigMap containing a taxonomy.csv key

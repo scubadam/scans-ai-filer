@@ -12,6 +12,7 @@ import (
 
 	"github.com/scubadam/scans-ai-filer/internal/ai"
 	"github.com/scubadam/scans-ai-filer/internal/notify"
+	"github.com/scubadam/scans-ai-filer/internal/pdfenc"
 	"github.com/scubadam/scans-ai-filer/internal/storage"
 	"github.com/scubadam/scans-ai-filer/internal/taxonomy"
 )
@@ -20,11 +21,13 @@ var dateInFilenameRe = regexp.MustCompile(`(\d{4})[-_]?(\d{2})[-_]?(\d{2})`)
 
 // Options configures a batch run of Filer.
 type Options struct {
-	ScansFolderName string
-	BatchSize       int
-	PauseDuration   time.Duration
-	DryRun          bool
-	Taxonomy        []taxonomy.Rule
+	ScansFolderName  string
+	BatchSize        int
+	PauseDuration    time.Duration
+	DryRun           bool
+	PDFPassword      string
+	PDFOwnerPassword string
+	Taxonomy         []taxonomy.Rule
 }
 
 // Result summarizes the outcome of a batch run.
@@ -62,6 +65,7 @@ func (f *Filer) Run(ctx context.Context, opts Options) (*Result, error) {
 		"ai", f.AI.Name(),
 		"batch_size", opts.BatchSize,
 		"taxonomy_rules", len(opts.Taxonomy),
+		"pdf_encryption", opts.PDFPassword != "",
 		"dry_run", opts.DryRun,
 	)
 
@@ -176,6 +180,13 @@ func (f *Filer) processOne(ctx context.Context, item storage.InboxFile, opts Opt
 	if strings.TrimSpace(rawFilename) == "" {
 		rawFilename = item.Name
 	}
+	encryptEnabled := strings.TrimSpace(opts.PDFPassword) != ""
+	if encryptEnabled {
+		// Encrypted files are always stored as AES-256 PDFs (images are wrapped into a single-page PDF)
+		base, _ := taxonomy.SplitExt(taxonomy.SanitizeFilename(rawFilename, ".pdf"))
+		rawFilename = base + ".pdf"
+		fallbackExt = ".pdf"
+	}
 	cleanFilename := taxonomy.SanitizeFilename(rawFilename, fallbackExt)
 
 	targetFolderPath := strings.TrimSpace(analysis.SuggestedFolderPath)
@@ -190,13 +201,14 @@ func (f *Filer) processOne(ctx context.Context, item storage.InboxFile, opts Opt
 	docDate := strings.TrimSpace(analysis.DocumentDate)
 	summary := strings.TrimSpace(analysis.Summary)
 
-	description, props := buildSanitizedMetadata(category, subcategory, organization, docType, docDate, summary, analysis.IsTaxonomyMatch)
+	description, props := buildSanitizedMetadata(category, subcategory, organization, docType, docDate, summary, analysis.IsTaxonomyMatch, encryptEnabled)
 
 	f.Logger.Info("classified document",
 		"taxonomy_match", analysis.IsTaxonomyMatch,
 		"new_name", cleanFilename,
 		"target_dir", opts.ScansFolderName+"/"+targetFolderPath,
 		"summary", summary,
+		"encrypted", encryptEnabled,
 	)
 
 	if opts.DryRun {
@@ -205,6 +217,15 @@ func (f *Filer) processOne(ctx context.Context, item storage.InboxFile, opts Opt
 			Filename: cleanFilename,
 			Folder:   opts.ScansFolderName + "/" + targetFolderPath,
 		}, false, nil
+	}
+
+	var encryptedBytes []byte
+	if encryptEnabled {
+		enc, err := pdfenc.EncryptDocument(ctx, data, item.MimeType, opts.PDFPassword, opts.PDFOwnerPassword)
+		if err != nil {
+			return notify.FiledItem{}, false, fmt.Errorf("encrypt document: %w", err)
+		}
+		encryptedBytes = enc
 	}
 
 	destFolderID, err := f.Storage.EnsureFolderPath(ctx, targetFolderPath)
@@ -232,8 +253,14 @@ func (f *Filer) processOne(ctx context.Context, item storage.InboxFile, opts Opt
 		Description: description,
 		Properties:  props,
 	}
-	if err := f.Storage.FileDocument(ctx, item.ID, destFolderID, meta); err != nil {
-		return notify.FiledItem{}, false, fmt.Errorf("file document: %w", err)
+	if encryptEnabled {
+		if err := f.Storage.FileEncryptedDocument(ctx, item.ID, destFolderID, encryptedBytes, "application/pdf", meta); err != nil {
+			return notify.FiledItem{}, false, fmt.Errorf("file encrypted document: %w", err)
+		}
+	} else {
+		if err := f.Storage.FileDocument(ctx, item.ID, destFolderID, meta); err != nil {
+			return notify.FiledItem{}, false, fmt.Errorf("file document: %w", err)
+		}
 	}
 
 	f.Logger.Info("filed document successfully", "name", finalFilename, "folder", opts.ScansFolderName+"/"+targetFolderPath)
@@ -257,7 +284,7 @@ func deriveFallbackDate(item storage.InboxFile, now time.Time) string {
 }
 
 // buildSanitizedMetadata constructs plaintext-safe search description and properties (no PII/details).
-func buildSanitizedMetadata(category, subcategory, organization, docType, docDate, summary string, isMatch bool) (string, map[string]string) {
+func buildSanitizedMetadata(category, subcategory, organization, docType, docDate, summary string, isMatch, encrypted bool) (string, map[string]string) {
 	var tags []string
 	for _, raw := range []string{category, organization, docType, subcategory} {
 		if t := taxonomy.SanitizeTag(raw); t != "" {
@@ -282,6 +309,9 @@ func buildSanitizedMetadata(category, subcategory, organization, docType, docDat
 		"doc_date":         docDate,
 		"processed_by":     "scans-ai-filer",
 		"taxonomy_matched": matched,
+	}
+	if encrypted {
+		props["encrypted"] = "aes-256"
 	}
 	return description, props
 }

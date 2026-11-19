@@ -8,7 +8,8 @@ ARG TARGETARCH
 
 WORKDIR /app
 
-COPY go.mod ./
+COPY go.mod go.sum ./
+RUN go mod download
 COPY cmd/ cmd/
 COPY internal/ internal/
 

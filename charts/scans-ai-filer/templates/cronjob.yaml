@@ -63,6 +63,14 @@ spec:
                     secretKeyRef:
                       name: {{ include "scans-ai-filer.secretName" . }}
                       key: {{ .Values.secrets.geminiApiKeyKey }}
+                {{- if .Values.secrets.pdfPasswordKey }}
+                - name: PDF_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ include "scans-ai-filer.secretName" . }}
+                      key: {{ .Values.secrets.pdfPasswordKey }}
+                      optional: true
+                {{- end }}
               resources:
                 {{- toYaml .Values.resources | nindent 16 }}
               volumeMounts:
