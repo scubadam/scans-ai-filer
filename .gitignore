@@ -2,6 +2,7 @@
 .env
 .env.*
 !.env.example
+!.devcontainer/.env
 gdrive-sa.json
 *.tgz
 /scans-ai-filer
