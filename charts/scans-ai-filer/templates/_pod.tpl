@@ -28,6 +28,9 @@ initContainers:
       periodSeconds: 2
     resources:
       {{- toYaml .Values.ocrSidecar.resources | nindent 6 }}
+    volumeMounts:
+      - name: ocr-tmp
+        mountPath: /tmp
 {{- end }}
 containers:
   - name: {{ .Chart.Name }}
@@ -193,6 +196,10 @@ volumes:
   - name: data
     persistentVolumeClaim:
       claimName: {{ .Values.persistence.existingClaim | default (printf "%s-data" (include "scans-ai-filer.fullname" .)) }}
+  {{- end }}
+  {{- if .Values.ocrSidecar.enabled }}
+  - name: ocr-tmp
+    emptyDir: {}
   {{- end }}
 {{- with .Values.nodeSelector }}
 nodeSelector:
