@@ -63,8 +63,14 @@ jobs:
 
       - name: Package & Push Helm Chart to GHCR OCI
         run: |
-          CHART_VER=$(grep '^version:' charts/scans-ai-filer/Chart.yaml | awk '{print $2}')
-          echo "Packaging Helm Chart version $CHART_VER..."
-          helm package charts/scans-ai-filer
+          TAG_VER="${GITHUB_REF_NAME#v}"
+          if [[ "$GITHUB_REF_TYPE" == "tag" && -n "$TAG_VER" ]]; then
+            CHART_VER="$TAG_VER"
+            helm package charts/scans-ai-filer --version "$CHART_VER" --app-version "$CHART_VER"
+          else
+            CHART_VER=$(grep '^version:' charts/scans-ai-filer/Chart.yaml | awk '{print $2}')
+            helm package charts/scans-ai-filer
+          fi
+          echo "Pushing Helm Chart version $CHART_VER..."
           echo ${{ secrets.GITHUB_TOKEN }} | helm registry login ghcr.io --username ${{ github.actor }} --password-stdin
           helm push scans-ai-filer-${CHART_VER}.tgz oci://ghcr.io/${{ github.repository_owner }}/charts
