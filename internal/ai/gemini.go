@@ -11,18 +11,28 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/scubadam/scans-ai-filer/internal/ocr"
+	"github.com/scubadam/scans-ai-filer/internal/taxonomy"
 )
 
 const defaultGeminiBaseURL = "https://generativelanguage.googleapis.com/v1beta"
 
 // GeminiProvider implements Provider using the Gemini generateContent REST API.
 type GeminiProvider struct {
-	APIKey     string
-	Model      string
-	BaseURL    string
-	HTTPClient *http.Client
-	MaxRetries int
-	Logger     *slog.Logger
+	APIKey          string
+	Model           string
+	BaseURL         string
+	HTTPClient      *http.Client
+	MaxRetries      int
+	HybridOCR       bool
+	OCR             ocr.Provider
+	OCRMinChars     int
+	VisualGlanceDim int
+	MaxPages        int
+	TaxonomyStore   taxonomy.Store
+	TopK            int
+	Logger          *slog.Logger
 }
 
 // NewGeminiProvider creates a GeminiProvider with sensible defaults.
@@ -45,25 +55,65 @@ func NewGeminiProvider(apiKey, model string, logger *slog.Logger) *GeminiProvide
 
 func (g *GeminiProvider) Name() string { return "gemini:" + g.Model }
 
-// AnalyzeDocument sends the document bytes and sanitized taxonomy prompt to Gemini.
+// AnalyzeDocument sends the document bytes (or, when HybridOCR is enabled, locally extracted
+// full-res OCR text + low-res visual thumbnail + top-K vector taxonomy) to Gemini.
 func (g *GeminiProvider) AnalyzeDocument(ctx context.Context, input DocumentInput) (*FilingMetadata, error) {
-	prompt := BuildClassificationPrompt(input)
-	b64Data := base64.StdEncoding.EncodeToString(input.Bytes)
+	var parts []map[string]any
+	usedHybrid := false
+
+	if g.HybridOCR {
+		minChars := g.OCRMinChars
+		if minChars <= 0 {
+			minChars = defaultOCRMinChars
+		}
+		detText, firstImg, _, err := extractDeterministicText(ctx, input, g.OCR, g.MaxPages, g.Logger)
+		if err == nil && len(detText) >= minChars {
+			usedHybrid = true
+			if g.TaxonomyStore != nil {
+				topK := g.TopK
+				if topK <= 0 {
+					topK = 8
+				}
+				if sr, sErr := g.TaxonomyStore.Search(ctx, detText, topK, 3); sErr == nil && (len(sr.Rules) > 0 || len(sr.Examples) > 0) {
+					input.Taxonomy = sr.Rules
+					input.TaxonomyExamples = sr.Examples
+					g.Logger.Info("gemini hybrid retrieved semantic taxonomy", "rules", len(sr.Rules), "examples", len(sr.Examples))
+				}
+			}
+			if firstImg != nil && g.VisualGlanceDim > 0 {
+				thumbBytes, thumbMime := downscaleImage(firstImg.data, firstImg.mimeType, g.VisualGlanceDim)
+				parts = append(parts, map[string]any{
+					"inline_data": map[string]any{
+						"mime_type": thumbMime,
+						"data":      base64.StdEncoding.EncodeToString(thumbBytes),
+					},
+				})
+			}
+			prompt := BuildClassificationPrompt(input) + "\n\nFULL-RESOLUTION OCR TEXT:\n" + detText
+			parts = append(parts, map[string]any{"text": prompt})
+			g.Logger.Info("using hybrid OCR mode for Gemini", "ocr_chars", len(detText), "with_thumbnail", firstImg != nil && g.VisualGlanceDim > 0)
+		}
+	}
+
+	if !usedHybrid {
+		prompt := BuildClassificationPrompt(input)
+		parts = []map[string]any{
+			{
+				"inline_data": map[string]any{
+					"mime_type": input.MimeType,
+					"data":      base64.StdEncoding.EncodeToString(input.Bytes),
+				},
+			},
+			{
+				"text": prompt,
+			},
+		}
+	}
 
 	payload := map[string]any{
 		"contents": []map[string]any{
 			{
-				"parts": []map[string]any{
-					{
-						"inline_data": map[string]any{
-							"mime_type": input.MimeType,
-							"data":      b64Data,
-						},
-					},
-					{
-						"text": prompt,
-					},
-				},
+				"parts": parts,
 			},
 		},
 		"generationConfig": map[string]any{

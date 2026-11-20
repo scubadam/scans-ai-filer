@@ -66,6 +66,30 @@ spec:
                 - name: OLLAMA_TIMEOUT_SECONDS
                   value: {{ .Values.config.ollamaTimeoutSeconds | quote }}
                 {{- end }}
+                {{- if .Values.config.ocrProvider }}
+                - name: OCR_PROVIDER
+                  value: {{ .Values.config.ocrProvider | quote }}
+                {{- end }}
+                {{- if .Values.config.ocrEndpointUrl }}
+                - name: OCR_ENDPOINT_URL
+                  value: {{ .Values.config.ocrEndpointUrl | quote }}
+                {{- end }}
+                {{- if .Values.config.ocrLang }}
+                - name: OCR_LANG
+                  value: {{ .Values.config.ocrLang | quote }}
+                {{- end }}
+                {{- if .Values.config.ocrMinChars }}
+                - name: OCR_MIN_CHARS
+                  value: {{ .Values.config.ocrMinChars | quote }}
+                {{- end }}
+                {{- if .Values.config.ocrVisualGlanceDim }}
+                - name: OCR_VISUAL_GLANCE_DIM
+                  value: {{ .Values.config.ocrVisualGlanceDim | quote }}
+                {{- end }}
+                {{- if .Values.config.ocrHybridRemote }}
+                - name: OCR_HYBRID_REMOTE
+                  value: {{ .Values.config.ocrHybridRemote | quote }}
+                {{- end }}
                 {{- if .Values.config.taxonomyDbPath }}
                 - name: TAXONOMY_DB_PATH
                   value: {{ .Values.config.taxonomyDbPath | quote }}
