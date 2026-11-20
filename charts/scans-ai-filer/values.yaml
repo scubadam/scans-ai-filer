@@ -107,6 +107,20 @@ ocrSidecar:
       cpu: 1000m
       memory: 512Mi
 
+webUI:
+  # Optional embedded Taxonomy Browser/Editor PWA (recommended with workloadMode: deployment + persistence.enabled: true)
+  enabled: false
+  port: 8080
+  service:
+    type: ClusterIP
+    port: 80
+  ingress:
+    enabled: false
+    className: ""
+    host: "scans.homelab"
+    annotations: {}
+    tls: []
+
 resources:
   requests:
     cpu: 50m

@@ -1,0 +1,9 @@
+{
+  "name": "Scans AI Filer",
+  "short_name": "Scans Filer",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
+  "description": "Taxonomy Browser, Review Queue, and Vector Search for Scans AI Filer"
+}

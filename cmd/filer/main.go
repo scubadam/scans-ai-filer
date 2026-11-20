@@ -21,6 +21,7 @@ import (
 	"github.com/scubadam/scans-ai-filer/internal/storage"
 	"github.com/scubadam/scans-ai-filer/internal/storage/gdrive"
 	"github.com/scubadam/scans-ai-filer/internal/taxonomy"
+	"github.com/scubadam/scans-ai-filer/internal/webui"
 )
 
 func buildStorage(cfg *config.Config, inboxFolder string, logger *slog.Logger) (storage.Provider, error) {
@@ -376,6 +377,71 @@ func main() {
 	}
 
 	// Continuous daemon mode (Deployment): run sequentially, sleeping only AFTER each cycle finishes
+	scanNowCh := make(chan struct{}, 1)
+
+	if cfg.WebUIEnabled {
+		adminStore, _ := taxStore.(taxonomy.AdminStore)
+		uiSrv := &webui.Server{
+			Store:  adminStore,
+			Logger: logger,
+			Hooks: webui.Hooks{
+				TriggerScan: func() bool {
+					select {
+					case scanNowCh <- struct{}{}:
+						return true
+					default:
+						return false
+					}
+				},
+				RunTidy: func(reqCtx context.Context, dryRun bool) (*maint.TidyResult, error) {
+					aiProv, err := buildAI(cfg, cfg.InboxRoutes[0].AIProvider, taxStore, ocrProv, logger)
+					if err != nil {
+						return nil, err
+					}
+					completer, ok := aiProv.(ai.TextCompleter)
+					if !ok {
+						return nil, fmt.Errorf("AI provider %q does not support text JSON completions", aiProv.Name())
+					}
+					return maint.TidyTaxonomy(reqCtx, taxStore, completer, dryRun, logger)
+				},
+				RunReorg: func(reqCtx context.Context, dryRun, sanitizeNames bool) (*maint.ReorgResult, error) {
+					st, err := buildStorage(cfg, cfg.InboxRoutes[0].InboxFolder, logger)
+					if err != nil {
+						return nil, err
+					}
+					if err := st.Init(reqCtx); err != nil {
+						return nil, err
+					}
+					mStore, ok := st.(storage.MaintenanceProvider)
+					if !ok {
+						return nil, fmt.Errorf("storage provider %q does not support reorganization", st.Name())
+					}
+					var completer ai.TextCompleter
+					if sanitizeNames {
+						if aiProv, err := buildAI(cfg, cfg.InboxRoutes[0].AIProvider, taxStore, ocrProv, logger); err == nil {
+							completer, _ = aiProv.(ai.TextCompleter)
+						}
+					}
+					return maint.ReorgStorage(reqCtx, st, mStore, taxStore, completer, maint.ReorgOptions{
+						DryRun:            dryRun,
+						SanitizeFilenames: sanitizeNames,
+						PruneEmpty:        true,
+					}, logger)
+				},
+				ConfigInfo: map[string]any{
+					"storage":  cfg.StorageProvider,
+					"routes":   cfg.InboxRoutes,
+					"poll_sec": cfg.PollIntervalSeconds,
+				},
+			},
+		}
+		go func() {
+			if err := uiSrv.ListenAndServe(ctx, cfg.WebUIAddr); err != nil {
+				logger.Error("web UI server error", "err", err)
+			}
+		}()
+	}
+
 	interval := time.Duration(cfg.PollIntervalSeconds) * time.Second
 	logger.Info("starting daemon poll loop", "poll_interval", interval.String(), "routes", len(cfg.InboxRoutes))
 	for {
@@ -388,6 +454,9 @@ func main() {
 			timer.Stop()
 			logger.Info("received shutdown signal; exiting cleanly")
 			return
+		case <-scanNowCh:
+			timer.Stop()
+			logger.Info("manual scan triggered via Web UI")
 		case <-timer.C:
 		}
 	}

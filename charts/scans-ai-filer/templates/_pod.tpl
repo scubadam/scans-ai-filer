@@ -36,6 +36,17 @@ containers:
   - name: {{ .Chart.Name }}
     image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
     imagePullPolicy: {{ .Values.image.pullPolicy }}
+    {{- if .Values.webUI.enabled }}
+    ports:
+      - name: http
+        containerPort: {{ .Values.webUI.port }}
+    readinessProbe:
+      httpGet:
+        path: /healthz
+        port: http
+      initialDelaySeconds: 2
+      periodSeconds: 10
+    {{- end }}
     securityContext:
       {{- toYaml .Values.securityContext | nindent 6 }}
     env:
@@ -140,6 +151,12 @@ containers:
       {{- if .Values.config.webhookUrl }}
       - name: WEBHOOK_URL
         value: {{ .Values.config.webhookUrl | quote }}
+      {{- end }}
+      {{- if .Values.webUI.enabled }}
+      - name: WEB_UI_ENABLED
+        value: "true"
+      - name: WEB_UI_ADDR
+        value: ":{{ .Values.webUI.port }}"
       {{- end }}
       - name: GOOGLE_APPLICATION_CREDENTIALS
         value: "/etc/gdrive/{{ .Values.secrets.gdriveSaJsonKey }}"

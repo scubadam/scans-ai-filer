@@ -214,10 +214,22 @@ func (f *Filer) processOne(ctx context.Context, item storage.InboxFile, opts Opt
 	docType := defaultString(analysis.DocumentType, "Document")
 	summary := strings.TrimSpace(analysis.Summary)
 
+	confidence := analysis.Confidence
+	if confidence <= 0 || confidence > 1 {
+		if analysis.IsTaxonomyMatch {
+			confidence = 0.92
+		} else {
+			confidence = 0.70
+		}
+	}
+	confReason := strings.TrimSpace(analysis.ConfidenceReason)
+
 	description, props := buildSanitizedMetadata(category, subcategory, organization, docType, docDate, summary, f.AI.Name(), analysis.IsTaxonomyMatch, encryptEnabled)
+	props["confidence"] = fmt.Sprintf("%.2f", confidence)
 
 	f.Logger.Info("classified document",
 		"taxonomy_match", analysis.IsTaxonomyMatch,
+		"confidence", fmt.Sprintf("%.2f", confidence),
 		"new_name", cleanFilename,
 		"target_dir", opts.ScansFolderName+"/"+targetFolderPath,
 		"summary", summary,
@@ -302,27 +314,35 @@ func (f *Filer) processOne(ctx context.Context, item storage.InboxFile, opts Opt
 
 	f.Logger.Info("filed document successfully", "name", finalFilename, "folder", opts.ScansFolderName+"/"+targetFolderPath)
 
-	// Self-learning write-back: index strictly PII-free filing metadata into the taxonomy vector store
+	// Self-learning write-back: index strictly PII-free filing metadata + confidence into the taxonomy vector store
 	if f.TaxonomyStore != nil && !strings.EqualFold(targetFolderPath, "Unsorted") {
 		tplPath := templatizeFolderYear(targetFolderPath)
 		if err := f.TaxonomyStore.RecordFiling(ctx, taxonomy.FilingExample{
-			Category:     category,
-			Subcategory:  subcategory,
-			Organization: organization,
-			DocumentType: docType,
-			Summary:      summary,
-			FolderPath:   tplPath,
+			Category:         category,
+			Subcategory:      subcategory,
+			Organization:     organization,
+			DocumentType:     docType,
+			Summary:          summary,
+			FolderPath:       tplPath,
+			Confidence:       confidence,
+			ConfidenceReason: confReason,
+			Reviewed:         analysis.IsTaxonomyMatch && confidence >= 0.85,
 		}); err != nil {
 			f.Logger.Warn("failed to record filing in taxonomy store", "err", err)
 		}
 		if !analysis.IsTaxonomyMatch && organization != "Unknown" {
-			if err := f.TaxonomyStore.UpsertRule(ctx, taxonomy.Rule{
+			learnedRule := taxonomy.Rule{
 				Category:     category,
 				Subcategory:  subcategory,
 				Organization: organization,
 				Keywords:     docType,
 				PathTemplate: tplPath,
-			}, "learned"); err != nil {
+			}
+			if adminStore, ok := f.TaxonomyStore.(taxonomy.AdminStore); ok {
+				if err := adminStore.UpsertRuleWithConfidence(ctx, learnedRule, "learned", confidence, false); err != nil {
+					f.Logger.Warn("failed to learn new taxonomy rule", "org", organization, "err", err)
+				}
+			} else if err := f.TaxonomyStore.UpsertRule(ctx, learnedRule, "learned"); err != nil {
 				f.Logger.Warn("failed to learn new taxonomy rule", "org", organization, "err", err)
 			}
 		}

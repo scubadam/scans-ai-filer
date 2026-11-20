@@ -1,0 +1,31 @@
+{{- if and .Values.webUI.enabled .Values.webUI.ingress.enabled (eq .Values.workloadMode "deployment") }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "scans-ai-filer.fullname" . }}
+  labels:
+    {{- include "scans-ai-filer.labels" . | nindent 4 }}
+  {{- with .Values.webUI.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.webUI.ingress.className }}
+  ingressClassName: {{ .Values.webUI.ingress.className | quote }}
+  {{- end }}
+  {{- with .Values.webUI.ingress.tls }}
+  tls:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.webUI.ingress.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "scans-ai-filer.fullname" . }}
+                port:
+                  name: http
+{{- end }}
