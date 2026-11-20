@@ -39,6 +39,14 @@ type Config struct {
 	OllamaMaxPages       int
 	OllamaMaxImageDim    int
 
+	// Hybrid deterministic OCR + low-res visual glance configuration
+	OCRProvider        string
+	OCREndpointURL     string
+	OCRLang            string
+	OCRMinChars        int
+	OCRVisualGlanceDim int
+	OCRHybridRemote    bool
+
 	// Taxonomy, vector store, and batch processing
 	TaxonomyCSVPath   string
 	TaxonomyDBPath    string
@@ -136,6 +144,29 @@ func Load(dryRunFlag bool) (*Config, error) {
 		taxonomyTopK = v
 	}
 
+	ocrMinChars := 80
+	if raw := strings.TrimSpace(os.Getenv("OCR_MIN_CHARS")); raw != "" {
+		v, err := strconv.Atoi(raw)
+		if err != nil || v < 0 {
+			return nil, fmt.Errorf("invalid OCR_MIN_CHARS %q: must be >= 0", raw)
+		}
+		ocrMinChars = v
+	}
+
+	ocrVisualGlanceDim := 640
+	if raw := strings.TrimSpace(os.Getenv("OCR_VISUAL_GLANCE_DIM")); raw != "" {
+		v, err := strconv.Atoi(raw)
+		if err != nil || v < 0 {
+			return nil, fmt.Errorf("invalid OCR_VISUAL_GLANCE_DIM %q: must be >= 0", raw)
+		}
+		ocrVisualGlanceDim = v
+	}
+
+	ocrHybridRemote := false
+	if raw := strings.ToLower(strings.TrimSpace(os.Getenv("OCR_HYBRID_REMOTE"))); raw == "1" || raw == "true" || raw == "yes" {
+		ocrHybridRemote = true
+	}
+
 	dryRun := dryRunFlag
 	if !dryRun {
 		v := strings.ToLower(strings.TrimSpace(os.Getenv("DRY_RUN")))
@@ -186,6 +217,12 @@ func Load(dryRunFlag bool) (*Config, error) {
 		OllamaTimeoutSeconds:  ollamaTimeout,
 		OllamaMaxPages:        ollamaMaxPages,
 		OllamaMaxImageDim:     ollamaMaxImageDim,
+		OCRProvider:           strings.ToLower(envOrDefault("OCR_PROVIDER", "auto")),
+		OCREndpointURL:        strings.TrimSpace(os.Getenv("OCR_ENDPOINT_URL")),
+		OCRLang:               envOrDefault("OCR_LANG", "eng"),
+		OCRMinChars:           ocrMinChars,
+		OCRVisualGlanceDim:    ocrVisualGlanceDim,
+		OCRHybridRemote:       ocrHybridRemote,
 		TaxonomyCSVPath:       strings.TrimSpace(os.Getenv("TAXONOMY_CSV_PATH")),
 		TaxonomyDBPath:        strings.TrimSpace(os.Getenv("TAXONOMY_DB_PATH")),
 		EmbeddingProvider:     strings.ToLower(envOrDefault("EMBEDDING_PROVIDER", "auto")),

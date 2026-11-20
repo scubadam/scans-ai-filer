@@ -18,17 +18,22 @@ import (
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
+	"github.com/scubadam/scans-ai-filer/internal/ocr"
 	"github.com/scubadam/scans-ai-filer/internal/taxonomy"
 	"golang.org/x/image/draw"
 	_ "golang.org/x/image/webp"
 )
 
 const (
-	defaultOllamaBaseURL     = "http://ollama-service.default.svc.cluster.local:11434/v1"
-	defaultOllamaModel       = "qwen2.5vl:3b"
-	defaultOllamaMaxPages    = 5
-	defaultOllamaMaxImageDim = 1536
+	defaultOllamaBaseURL         = "http://ollama-service.default.svc.cluster.local:11434/v1"
+	defaultOllamaModel           = "qwen2.5vl:3b"
+	defaultOllamaMaxPages        = 5
+	defaultOllamaMaxImageDim     = 1536
+	defaultOllamaVisualGlanceDim = 640
+	defaultOCRMinChars           = 80
 )
+
+const visualGlancePrompt = `In 1 to 2 concise sentences, describe the visual document type, layout, and any recognizable logos or physical features (for example: "UK passport photo bio page with portrait photo", "UK photocard driving licence", "NHS hospital appointment letter with blue NHS logo", "utility bill with usage chart", or "handwritten receipt"). Do not transcribe personal details or speculate.`
 
 const pageExtractionPrompt = `Read this scanned document page carefully and extract key filing metadata in plain text:
 - Document issue date: ONLY the letter date, statement date, invoice date, or passport/ID Date of Issue (include the 4-digit year if visible, and label it clearly e.g. "Date of Issue: YYYY-MM-DD"). NEVER extract Date of Birth (DOB), expiry dates, or personal ID numbers.
@@ -47,16 +52,19 @@ Do not invent information or speculate (e.g. do not call a plain passport scan a
 //  2. Stage 2 (Reduce): Send the combined extracted document text with the taxonomy catalog
 //     in a text-only classification call (zero vision VRAM) to produce strict FilingMetadata JSON.
 type OllamaOpenAIProvider struct {
-	BaseURL       string
-	APIKey        string
-	Model         string
-	TextModel     string
-	MaxPages      int
-	MaxImageDim   int
-	TaxonomyStore taxonomy.Store
-	TopK          int
-	HTTPClient    *http.Client
-	Logger        *slog.Logger
+	BaseURL         string
+	APIKey          string
+	Model           string
+	TextModel       string
+	MaxPages        int
+	MaxImageDim     int
+	VisualGlanceDim int
+	OCR             ocr.Provider
+	OCRMinChars     int
+	TaxonomyStore   taxonomy.Store
+	TopK            int
+	HTTPClient      *http.Client
+	Logger          *slog.Logger
 }
 
 // NewOllamaOpenAIProvider creates an OllamaOpenAIProvider with sensible defaults.
@@ -74,13 +82,15 @@ func NewOllamaOpenAIProvider(baseURL, apiKey, modelName string, timeout time.Dur
 		logger = slog.Default()
 	}
 	return &OllamaOpenAIProvider{
-		BaseURL:     strings.TrimRight(strings.TrimSpace(baseURL), "/"),
-		APIKey:      strings.TrimSpace(apiKey),
-		Model:       strings.TrimSpace(modelName),
-		MaxPages:    defaultOllamaMaxPages,
-		MaxImageDim: defaultOllamaMaxImageDim,
-		HTTPClient:  &http.Client{Timeout: timeout},
-		Logger:      logger,
+		BaseURL:         strings.TrimRight(strings.TrimSpace(baseURL), "/"),
+		APIKey:          strings.TrimSpace(apiKey),
+		Model:           strings.TrimSpace(modelName),
+		MaxPages:        defaultOllamaMaxPages,
+		MaxImageDim:     defaultOllamaMaxImageDim,
+		VisualGlanceDim: defaultOllamaVisualGlanceDim,
+		OCRMinChars:     defaultOCRMinChars,
+		HTTPClient:      &http.Client{Timeout: timeout},
+		Logger:          logger,
 	}
 }
 
@@ -159,42 +169,147 @@ IMPORTANT: Return ONLY a single valid JSON object (no markdown fences, no commen
 	return &meta, nil
 }
 
+func (o *OllamaOpenAIProvider) ocrMinChars() int {
+	if o.OCRMinChars > 0 {
+		return o.OCRMinChars
+	}
+	return defaultOCRMinChars
+}
+
 func (o *OllamaOpenAIProvider) extractDocumentText(ctx context.Context, input DocumentInput) (string, error) {
 	mime := strings.ToLower(strings.TrimSpace(input.MimeType))
 
-	switch {
-	case strings.HasPrefix(mime, "text/"):
+	if strings.HasPrefix(mime, "text/") {
 		return string(input.Bytes), nil
+	}
 
-	case strings.HasPrefix(mime, "image/"):
-		imgBytes, imgMime := downscaleImage(input.Bytes, mime, o.MaxImageDim)
-		pageText, err := o.extractPageText(ctx, imgBytes, imgMime, 1, 1)
-		if err != nil {
-			return "", fmt.Errorf("local VLM image OCR failed: %w", err)
-		}
-		return "--- PAGE 1 ---\n" + pageText, nil
+	// Step 1: Try deterministic full-resolution text extraction (PDF text layer + optional OCR engine)
+	detText, firstImg, imgs, err := extractDeterministicText(ctx, input, o.OCR, o.maxPages(), o.Logger)
+	if err != nil {
+		return "", err
+	}
 
-	case mime == "application/pdf":
-		imgs, err := extractPDFImages(ctx, input.Bytes, o.maxPages())
-		if err != nil || len(imgs) == 0 {
-			return "", fmt.Errorf("PDF contains no extractable scanned images for local VLM (err=%v)", err)
-		}
+	if len(detText) >= o.ocrMinChars() {
+		o.Logger.Info("using hybrid deterministic OCR + visual glance",
+			"ocr_chars", len(detText),
+			"visual_glance_dim", o.VisualGlanceDim,
+		)
 		var sb strings.Builder
-		for i, img := range imgs {
-			imgBytes, imgMime := downscaleImage(img.data, img.mimeType, o.MaxImageDim)
-			pageText, err := o.extractPageText(ctx, imgBytes, imgMime, i+1, len(imgs))
-			if err != nil {
-				return "", fmt.Errorf("local VLM OCR failed on page %d/%d: %w", i+1, len(imgs), err)
-			}
-			if i > 0 {
+		if firstImg != nil && o.VisualGlanceDim > 0 {
+			glanceBytes, glanceMime := downscaleImage(firstImg.data, firstImg.mimeType, o.VisualGlanceDim)
+			if glance, gErr := o.extractVisualGlance(ctx, glanceBytes, glanceMime); gErr != nil {
+				o.Logger.Warn("low-res visual glance failed; continuing with full-res OCR text", "err", gErr)
+			} else if glance != "" {
+				sb.WriteString("VISUAL DOCUMENT OVERVIEW:\n")
+				sb.WriteString(glance)
 				sb.WriteString("\n\n")
 			}
-			sb.WriteString(fmt.Sprintf("--- PAGE %d ---\n%s", i+1, strings.TrimSpace(pageText)))
 		}
+		sb.WriteString("FULL-RESOLUTION OCR TEXT:\n")
+		sb.WriteString(detText)
 		return sb.String(), nil
+	}
+
+	// Step 2: Fallback to per-page VLM OCR (e.g. no OCR engine configured, handwritten notes, or photo-only docs)
+	if len(imgs) == 0 {
+		return "", fmt.Errorf("document contains no extractable text or scanned images for local VLM")
+	}
+	var sb strings.Builder
+	for i, img := range imgs {
+		imgBytes, imgMime := downscaleImage(img.data, img.mimeType, o.MaxImageDim)
+		pageText, err := o.extractPageText(ctx, imgBytes, imgMime, i+1, len(imgs))
+		if err != nil {
+			return "", fmt.Errorf("local VLM OCR failed on page %d/%d: %w", i+1, len(imgs), err)
+		}
+		if i > 0 {
+			sb.WriteString("\n\n")
+		}
+		sb.WriteString(fmt.Sprintf("--- PAGE %d ---\n%s", i+1, strings.TrimSpace(pageText)))
+	}
+	return sb.String(), nil
+}
+
+func (o *OllamaOpenAIProvider) extractVisualGlance(ctx context.Context, imgBytes []byte, imgMime string) (string, error) {
+	dataURL := fmt.Sprintf("data:%s;base64,%s", imgMime, base64.StdEncoding.EncodeToString(imgBytes))
+	parts := []map[string]any{
+		{"type": "text", "text": visualGlancePrompt},
+		{"type": "image_url", "image_url": map[string]string{"url": dataURL}},
+	}
+	text, err := o.chatCompletion(ctx, o.Model, parts, false)
+	if err != nil {
+		return "", err
+	}
+	text = strings.TrimSpace(text)
+	o.Logger.Info("local VLM visual glance complete", "model", o.Model, "chars", len(text))
+	return text, nil
+}
+
+// extractDeterministicText extracts text from digital PDFs (pure-Go text layer) or full-resolution
+// raster images (via optional ocr.Provider), while also returning extracted page images for
+// either a low-res visual glance or full-res VLM fallback.
+func extractDeterministicText(ctx context.Context, input DocumentInput, ocrProv ocr.Provider, maxPages int, logger *slog.Logger) (string, *extractedImage, []extractedImage, error) {
+	mime := strings.ToLower(strings.TrimSpace(input.MimeType))
+	if maxPages <= 0 {
+		maxPages = defaultOllamaMaxPages
+	}
+
+	switch {
+	case strings.HasPrefix(mime, "image/"):
+		img := extractedImage{mimeType: mime, data: input.Bytes}
+		var detText string
+		if ocrProv != nil {
+			if txt, err := ocrProv.ExtractImageText(ctx, img.data, img.mimeType); err != nil {
+				logger.Warn("deterministic image OCR failed; will fall back to VLM", "ocr", ocrProv.Name(), "err", err)
+			} else {
+				detText = strings.TrimSpace(txt)
+			}
+		}
+		return detText, &img, []extractedImage{img}, nil
+
+	case mime == "application/pdf":
+		imgs, imgErr := extractPDFImages(ctx, input.Bytes, maxPages)
+		var firstImg *extractedImage
+		if len(imgs) > 0 {
+			firstImg = &imgs[0]
+		}
+
+		// Tier 1: pure-Go embedded PDF text layer (<50ms)
+		if textLayer, err := ocr.ExtractPDFTextLayer(ctx, input.Bytes, maxPages); err == nil && len(strings.TrimSpace(textLayer)) > 0 {
+			logger.Info("extracted embedded PDF text layer", "chars", len(textLayer))
+			return strings.TrimSpace(textLayer), firstImg, imgs, nil
+		}
+
+		// Tier 2: full-resolution deterministic OCR over each extracted raster page image
+		if ocrProv != nil && len(imgs) > 0 {
+			var sb strings.Builder
+			for i, img := range imgs {
+				txt, err := ocrProv.ExtractImageText(ctx, img.data, img.mimeType)
+				if err != nil {
+					logger.Warn("deterministic PDF page OCR failed", "ocr", ocrProv.Name(), "page", i+1, "err", err)
+					continue
+				}
+				txt = strings.TrimSpace(txt)
+				if txt == "" {
+					continue
+				}
+				if sb.Len() > 0 {
+					sb.WriteString("\n\n")
+				}
+				fmt.Fprintf(&sb, "--- PAGE %d ---\n%s", i+1, txt)
+			}
+			if sb.Len() > 0 {
+				logger.Info("extracted full-res OCR text from PDF pages", "ocr", ocrProv.Name(), "pages", len(imgs), "chars", sb.Len())
+				return sb.String(), firstImg, imgs, nil
+			}
+		}
+
+		if imgErr != nil && len(imgs) == 0 {
+			return "", nil, nil, fmt.Errorf("PDF contains no extractable text or scanned images (err=%v)", imgErr)
+		}
+		return "", firstImg, imgs, nil
 
 	default:
-		return "", fmt.Errorf("unsupported mime type for local VLM: %q", input.MimeType)
+		return "", nil, nil, fmt.Errorf("unsupported mime type: %q", input.MimeType)
 	}
 }
 

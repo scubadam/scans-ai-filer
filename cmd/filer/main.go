@@ -16,6 +16,7 @@ import (
 	"github.com/scubadam/scans-ai-filer/internal/embed"
 	"github.com/scubadam/scans-ai-filer/internal/filer"
 	"github.com/scubadam/scans-ai-filer/internal/notify"
+	"github.com/scubadam/scans-ai-filer/internal/ocr"
 	"github.com/scubadam/scans-ai-filer/internal/storage"
 	"github.com/scubadam/scans-ai-filer/internal/storage/gdrive"
 	"github.com/scubadam/scans-ai-filer/internal/taxonomy"
@@ -67,10 +68,18 @@ func buildEmbedder(cfg *config.Config) embed.Provider {
 	}
 }
 
-func buildAI(cfg *config.Config, providerName string, taxStore taxonomy.Store, logger *slog.Logger) (ai.Provider, error) {
+func buildAI(cfg *config.Config, providerName string, taxStore taxonomy.Store, ocrProv ocr.Provider, logger *slog.Logger) (ai.Provider, error) {
 	switch strings.ToLower(providerName) {
 	case "gemini":
-		return ai.NewGeminiProvider(cfg.GeminiAPIKey, cfg.GeminiModel, logger), nil
+		g := ai.NewGeminiProvider(cfg.GeminiAPIKey, cfg.GeminiModel, logger)
+		g.HybridOCR = cfg.OCRHybridRemote
+		g.OCR = ocrProv
+		g.OCRMinChars = cfg.OCRMinChars
+		g.VisualGlanceDim = cfg.OCRVisualGlanceDim
+		g.MaxPages = cfg.OllamaMaxPages
+		g.TaxonomyStore = taxStore
+		g.TopK = cfg.TaxonomyTopK
+		return g, nil
 	case "ollama", "openai":
 		p := ai.NewOllamaOpenAIProvider(
 			cfg.OllamaBaseURL,
@@ -82,6 +91,9 @@ func buildAI(cfg *config.Config, providerName string, taxStore taxonomy.Store, l
 		p.TextModel = cfg.OllamaTextModel
 		p.MaxPages = cfg.OllamaMaxPages
 		p.MaxImageDim = cfg.OllamaMaxImageDim
+		p.VisualGlanceDim = cfg.OCRVisualGlanceDim
+		p.OCR = ocrProv
+		p.OCRMinChars = cfg.OCRMinChars
 		p.TaxonomyStore = taxStore
 		p.TopK = cfg.TaxonomyTopK
 		return p, nil
@@ -198,6 +210,11 @@ func main() {
 		}
 	}
 
+	ocrProv := ocr.AutoProvider(cfg.OCRProvider, cfg.OCREndpointURL, cfg.OCRLang, 60*time.Second)
+	if ocrProv != nil {
+		logger.Info("enabled deterministic OCR provider", "provider", ocrProv.Name(), "visual_glance_dim", cfg.OCRVisualGlanceDim, "hybrid_remote", cfg.OCRHybridRemote)
+	}
+
 	notifier := notify.NewWebhookNotifier(cfg.WebhookURL, logger)
 
 	var anyErr error
@@ -211,7 +228,7 @@ func main() {
 			continue
 		}
 
-		aiProvider, err := buildAI(cfg, route.AIProvider, taxStore, logger)
+		aiProvider, err := buildAI(cfg, route.AIProvider, taxStore, ocrProv, logger)
 		if err != nil {
 			logger.Error("failed to build AI provider", "inbox", route.InboxFolder, "err", err)
 			anyErr = err

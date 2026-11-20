@@ -167,3 +167,74 @@ func TestDownscaleImage(t *testing.T) {
 		t.Errorf("expected maxDim=0 to disable scaling")
 	}
 }
+
+type mockOCR struct {
+	text  string
+	calls atomic.Int32
+}
+
+func (m *mockOCR) Name() string { return "mock-ocr" }
+func (m *mockOCR) ExtractImageText(_ context.Context, _ []byte, _ string) (string, error) {
+	m.calls.Add(1)
+	return m.text, nil
+}
+
+func TestOllamaHybridOCRPlusVisualGlance(t *testing.T) {
+	var visionCalls atomic.Int32
+	var classifyPrompt string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		msgs := req["messages"].([]any)
+		content := msgs[0].(map[string]any)["content"].([]any)
+		hasImage := false
+		var textCombined strings.Builder
+		for _, part := range content {
+			pm := part.(map[string]any)
+			if pm["type"] == "image_url" {
+				hasImage = true
+			}
+			if pm["type"] == "text" {
+				textCombined.WriteString(pm["text"].(string))
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if hasImage {
+			visionCalls.Add(1)
+			_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"UK passport photo bio page with portrait photo and HMPO crest."}}]}`))
+			return
+		}
+		classifyPrompt = textCombined.String()
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"document_date\":\"2022-05-10\",\"organization\":\"HMPO\",\"document_type\":\"Passport\",\"category\":\"Personal\",\"subcategory\":\"Identification\",\"summary\":\"Passport Bio Page\",\"suggested_filename\":\"2022-05-10 - HMPO - Passport - Passport Bio Page.pdf\",\"suggested_folder_path\":\"Personal/Identification/HMPO/2022\",\"is_taxonomy_match\":true}"}}]}`))
+	}))
+	defer srv.Close()
+
+	ocrMock := &mockOCR{text: "HM PASSPORT OFFICE UNITED KINGDOM PASSPORT\nDate of Issue: 10 MAY 2022\nAuthority: HMPO\nStandard full resolution OCR extracted text exceeding minimum threshold."}
+	provider := NewOllamaOpenAIProvider(srv.URL, "", "qwen2.5vl:3b", 10*time.Second, nil)
+	provider.OCR = ocrMock
+	provider.VisualGlanceDim = 640
+
+	meta, err := provider.AnalyzeDocument(context.Background(), DocumentInput{
+		Bytes:            makeSampleScannedPDF(t, 2),
+		MimeType:         "application/pdf",
+		OriginalFilename: "passport.pdf",
+		FallbackExt:      ".pdf",
+		FallbackDate:     "2026-11-20",
+	})
+	if err != nil {
+		t.Fatalf("AnalyzeDocument hybrid failed: %v", err)
+	}
+	if ocrMock.calls.Load() != 2 {
+		t.Errorf("expected deterministic OCR on both full-res pages, got %d calls", ocrMock.calls.Load())
+	}
+	if visionCalls.Load() != 1 {
+		t.Errorf("expected only 1 low-res visual glance call on page 1, got %d", visionCalls.Load())
+	}
+	if !strings.Contains(classifyPrompt, "VISUAL DOCUMENT OVERVIEW:") || !strings.Contains(classifyPrompt, "FULL-RESOLUTION OCR TEXT:") {
+		t.Errorf("expected both visual overview and full-res OCR text in stage 2 prompt, got: %q", classifyPrompt)
+	}
+	if meta.Organization != "HMPO" || meta.Summary != "Passport Bio Page" {
+		t.Errorf("unexpected metadata: %+v", meta)
+	}
+}

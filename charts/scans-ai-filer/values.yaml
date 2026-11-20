@@ -26,6 +26,13 @@ config:
   ollamaMaxPages: 5
   ollamaMaxImageDim: 1536
   ollamaTimeoutSeconds: 300
+  # Optional deterministic OCR + low-res visual glance hybrid pipeline
+  ocrProvider: "auto" # auto | http | tesseract | none
+  ocrEndpointUrl: ""
+  ocrLang: "eng"
+  ocrMinChars: 80
+  ocrVisualGlanceDim: 640
+  ocrHybridRemote: false
   # Optional pure-Go SQLite + vector search taxonomy store (set persistence.enabled=true to persist)
   taxonomyDbPath: ""
   embeddingProvider: "auto" # auto | ollama | gemini | none
