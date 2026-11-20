@@ -42,6 +42,7 @@ type StoreStats struct {
 type Store interface {
 	Close() error
 	UpsertRule(ctx context.Context, rule Rule, source string) error
+	DeleteRule(ctx context.Context, category, organization string) error
 	SeedFromRules(ctx context.Context, rules []Rule, source string) (int, error)
 	RecordFiling(ctx context.Context, ex FilingExample) error
 	ListRules(ctx context.Context) ([]Rule, error)
@@ -197,6 +198,12 @@ ON CONFLICT(norm_key) DO UPDATE SET
 	embedding     = excluded.embedding,
 	updated_at    = excluded.updated_at
 `, normKey, r.Category, r.Subcategory, r.Organization, r.Keywords, r.PathTemplate, r.Description, source, text, modelName, vecBlob, now)
+	return err
+}
+
+func (s *SQLiteStore) DeleteRule(ctx context.Context, category, organization string) error {
+	normKey := NormalizeName(category) + "|" + NormalizeName(organization)
+	_, err := s.db.ExecContext(ctx, `DELETE FROM taxonomy_rules WHERE norm_key = ?`, normKey)
 	return err
 }
 

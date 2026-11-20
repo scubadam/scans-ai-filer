@@ -55,6 +55,60 @@ func NewGeminiProvider(apiKey, model string, logger *slog.Logger) *GeminiProvide
 
 func (g *GeminiProvider) Name() string { return "gemini:" + g.Model }
 
+// CompleteJSON runs a text-only structured JSON completion via Gemini generateContent.
+func (g *GeminiProvider) CompleteJSON(ctx context.Context, prompt string) (string, error) {
+	payload := map[string]any{
+		"contents": []map[string]any{
+			{"parts": []map[string]any{{"text": prompt}}},
+		},
+		"generationConfig": map[string]any{
+			"response_mime_type": "application/json",
+		},
+	}
+	rawBody, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
+	endpoint := fmt.Sprintf("%s/models/%s:generateContent?key=%s",
+		strings.TrimRight(g.BaseURL, "/"), g.Model, g.APIKey)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(rawBody))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := g.HTTPClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("gemini text completion error: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("gemini API returned HTTP %d: %s", resp.StatusCode, string(respBytes))
+	}
+	var apiResp struct {
+		Candidates []struct {
+			Content struct {
+				Parts []struct {
+					Text string `json:"text"`
+				} `json:"parts"`
+			} `json:"content"`
+		} `json:"candidates"`
+	}
+	if err := json.Unmarshal(respBytes, &apiResp); err != nil {
+		return "", err
+	}
+	if len(apiResp.Candidates) == 0 || len(apiResp.Candidates[0].Content.Parts) == 0 {
+		return "", fmt.Errorf("gemini API returned no candidates")
+	}
+	return strings.TrimSpace(apiResp.Candidates[0].Content.Parts[0].Text), nil
+}
+
 // AnalyzeDocument sends the document bytes (or, when HybridOCR is enabled, locally extracted
 // full-res OCR text + low-res visual thumbnail + top-K vector taxonomy) to Gemini.
 func (g *GeminiProvider) AnalyzeDocument(ctx context.Context, input DocumentInput) (*FilingMetadata, error) {

@@ -61,3 +61,13 @@ type Provider interface {
 type FiledDocumentLister interface {
 	ListFiledDocuments(ctx context.Context) ([]taxonomy.FiledDocument, error)
 }
+
+// MaintenanceProvider is an optional capability implemented by storage providers that
+// support reorganizing already-filed documents, updating binary content in place (e.g.
+// OCR/encryption backfill), and pruning empty folders.
+type MaintenanceProvider interface {
+	FiledDocumentLister
+	MoveFiledDocument(ctx context.Context, fileID, oldParentID, newParentID, newName string, props map[string]string) error
+	UpdateFiledContent(ctx context.Context, fileID, newName, mimeType string, content []byte, props map[string]string) error
+	PruneEmptyFolders(ctx context.Context) (int, error)
+}
