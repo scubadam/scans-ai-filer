@@ -39,6 +39,8 @@ config:
   ocrMinChars: 80
   ocrVisualGlanceDim: 640
   ocrHybridRemote: false
+  # Embed invisible searchable OCR text layer across all pages of scanned PDFs before encryption
+  ocrEmbedPdf: false
   # Optional pure-Go SQLite + vector search taxonomy store (set persistence.enabled=true to persist)
   taxonomyDbPath: ""
   embeddingProvider: "auto" # auto | ollama | gemini | none

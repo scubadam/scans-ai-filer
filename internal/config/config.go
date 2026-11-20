@@ -46,6 +46,7 @@ type Config struct {
 	OCRMinChars        int
 	OCRVisualGlanceDim int
 	OCRHybridRemote    bool
+	OCREmbedPDF        bool
 
 	// Taxonomy, vector store, and batch processing
 	TaxonomyCSVPath   string
@@ -177,6 +178,11 @@ func Load(dryRunFlag bool) (*Config, error) {
 		ocrHybridRemote = true
 	}
 
+	ocrEmbedPDF := false
+	if raw := strings.ToLower(strings.TrimSpace(os.Getenv("OCR_EMBED_PDF"))); raw == "1" || raw == "true" || raw == "yes" {
+		ocrEmbedPDF = true
+	}
+
 	dryRun := dryRunFlag
 	if !dryRun {
 		v := strings.ToLower(strings.TrimSpace(os.Getenv("DRY_RUN")))
@@ -233,6 +239,7 @@ func Load(dryRunFlag bool) (*Config, error) {
 		OCRMinChars:           ocrMinChars,
 		OCRVisualGlanceDim:    ocrVisualGlanceDim,
 		OCRHybridRemote:       ocrHybridRemote,
+		OCREmbedPDF:           ocrEmbedPDF,
 		TaxonomyCSVPath:       strings.TrimSpace(os.Getenv("TAXONOMY_CSV_PATH")),
 		TaxonomyDBPath:        strings.TrimSpace(os.Getenv("TAXONOMY_DB_PATH")),
 		EmbeddingProvider:     strings.ToLower(envOrDefault("EMBEDDING_PROVIDER", "auto")),

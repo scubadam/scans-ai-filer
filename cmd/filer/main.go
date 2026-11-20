@@ -205,7 +205,7 @@ func main() {
 
 	ocrProv := ocr.AutoProvider(cfg.OCRProvider, cfg.OCREndpointURL, cfg.OCRLang, 60*time.Second)
 	if ocrProv != nil {
-		logger.Info("enabled deterministic OCR provider", "provider", ocrProv.Name(), "visual_glance_dim", cfg.OCRVisualGlanceDim, "hybrid_remote", cfg.OCRHybridRemote)
+		logger.Info("enabled deterministic OCR provider", "provider", ocrProv.Name(), "visual_glance_dim", cfg.OCRVisualGlanceDim, "hybrid_remote", cfg.OCRHybridRemote, "embed_pdf", cfg.OCREmbedPDF)
 	}
 
 	notifier := notify.NewWebhookNotifier(cfg.WebhookURL, logger)
@@ -244,6 +244,7 @@ func main() {
 				AI:            aiProvider,
 				Notifier:      notifier,
 				TaxonomyStore: taxStore,
+				OCR:           ocrProv,
 				Logger:        logger,
 			}
 
@@ -254,6 +255,7 @@ func main() {
 				DryRun:           cfg.DryRun,
 				PDFPassword:      cfg.PDFPassword,
 				PDFOwnerPassword: cfg.PDFOwnerPassword,
+				OCREmbedPDF:      cfg.OCREmbedPDF,
 				Taxonomy:         curRules,
 			})
 			if err != nil {

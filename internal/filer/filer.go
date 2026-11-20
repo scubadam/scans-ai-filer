@@ -12,6 +12,7 @@ import (
 
 	"github.com/scubadam/scans-ai-filer/internal/ai"
 	"github.com/scubadam/scans-ai-filer/internal/notify"
+	"github.com/scubadam/scans-ai-filer/internal/ocr"
 	"github.com/scubadam/scans-ai-filer/internal/pdfenc"
 	"github.com/scubadam/scans-ai-filer/internal/storage"
 	"github.com/scubadam/scans-ai-filer/internal/taxonomy"
@@ -31,6 +32,7 @@ type Options struct {
 	DryRun           bool
 	PDFPassword      string
 	PDFOwnerPassword string
+	OCREmbedPDF      bool
 	Taxonomy         []taxonomy.Rule
 }
 
@@ -48,6 +50,7 @@ type Filer struct {
 	AI            ai.Provider
 	Notifier      notify.Notifier
 	TaxonomyStore taxonomy.Store
+	OCR           ocr.Provider
 	Logger        *slog.Logger
 	Now           func() time.Time
 }
@@ -229,13 +232,37 @@ func (f *Filer) processOne(ctx context.Context, item storage.InboxFile, opts Opt
 		}, false, nil
 	}
 
-	var encryptedBytes []byte
+	uploadBytes := data
+	uploadMime := item.MimeType
+	bytesModified := false
+
+	// Optional full-document searchable OCR embedding (all pages, before encryption)
+	if opts.OCREmbedPDF && f.OCR != nil {
+		if builder, ok := f.OCR.(ocr.PDFBuilder); ok {
+			searchableBytes, changed, ocrErr := ocr.EmbedSearchableTextLayer(ctx, uploadBytes, uploadMime, builder, f.Logger)
+			if ocrErr != nil {
+				f.Logger.Warn("searchable OCR PDF embedding failed; filing original scan", "name", cleanFilename, "err", ocrErr)
+			} else if changed {
+				uploadBytes = searchableBytes
+				uploadMime = "application/pdf"
+				bytesModified = true
+				props["searchable_ocr"] = "true"
+				if !strings.HasSuffix(strings.ToLower(cleanFilename), ".pdf") {
+					base, _ := taxonomy.SplitExt(cleanFilename)
+					cleanFilename = base + ".pdf"
+				}
+			}
+		}
+	}
+
 	if encryptEnabled {
-		enc, err := pdfenc.EncryptDocument(ctx, data, item.MimeType, opts.PDFPassword, opts.PDFOwnerPassword)
+		enc, err := pdfenc.EncryptDocument(ctx, uploadBytes, uploadMime, opts.PDFPassword, opts.PDFOwnerPassword)
 		if err != nil {
 			return notify.FiledItem{}, false, fmt.Errorf("encrypt document: %w", err)
 		}
-		encryptedBytes = enc
+		uploadBytes = enc
+		uploadMime = "application/pdf"
+		bytesModified = true
 	}
 
 	destFolderID, err := f.Storage.EnsureFolderPath(ctx, targetFolderPath)
@@ -263,9 +290,9 @@ func (f *Filer) processOne(ctx context.Context, item storage.InboxFile, opts Opt
 		Description: description,
 		Properties:  props,
 	}
-	if encryptEnabled {
-		if err := f.Storage.FileEncryptedDocument(ctx, item.ID, destFolderID, encryptedBytes, "application/pdf", meta); err != nil {
-			return notify.FiledItem{}, false, fmt.Errorf("file encrypted document: %w", err)
+	if bytesModified {
+		if err := f.Storage.FileEncryptedDocument(ctx, item.ID, destFolderID, uploadBytes, uploadMime, meta); err != nil {
+			return notify.FiledItem{}, false, fmt.Errorf("file modified document: %w", err)
 		}
 	} else {
 		if err := f.Storage.FileDocument(ctx, item.ID, destFolderID, meta); err != nil {
