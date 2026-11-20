@@ -101,6 +101,10 @@ containers:
       - name: OCR_HYBRID_REMOTE
         value: {{ .Values.config.ocrHybridRemote | quote }}
       {{- end }}
+      {{- if .Values.config.ocrEmbedPdf }}
+      - name: OCR_EMBED_PDF
+        value: {{ .Values.config.ocrEmbedPdf | quote }}
+      {{- end }}
       {{- if .Values.config.taxonomyDbPath }}
       - name: TAXONOMY_DB_PATH
         value: {{ .Values.config.taxonomyDbPath | quote }}

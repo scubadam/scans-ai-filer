@@ -62,6 +62,37 @@ func main() {
 		_ = json.NewEncoder(w).Encode(map[string]string{"text": text})
 	})
 
+	mux.HandleFunc("POST /ocr/pdf", func(w http.ResponseWriter, r *http.Request) {
+		imgBytes, err := io.ReadAll(io.LimitReader(r.Body, 25<<20))
+		if err != nil || len(imgBytes) == 0 {
+			http.Error(w, "empty or unreadable image body", http.StatusBadRequest)
+			return
+		}
+		lang := strings.TrimSpace(r.URL.Query().Get("lang"))
+		if lang == "" {
+			lang = defaultLang
+		}
+
+		ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
+		defer cancel()
+
+		cmd := exec.CommandContext(ctx, "tesseract", "stdin", "stdout", "-l", lang, "--psm", "3", "pdf")
+		cmd.Stdin = bytes.NewReader(imgBytes)
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			logger.Error("tesseract pdf failed", "err", err, "stderr", strings.TrimSpace(stderr.String()))
+			http.Error(w, "ocr pdf failed", http.StatusInternalServerError)
+			return
+		}
+
+		pdfBytes := stdout.Bytes()
+		logger.Info("ocr pdf completed", "bytes_in", len(imgBytes), "pdf_bytes_out", len(pdfBytes), "lang", lang)
+		w.Header().Set("Content-Type", "application/pdf")
+		_, _ = w.Write(pdfBytes)
+	})
+
 	srv := &http.Server{
 		Addr:              addr,
 		Handler:           mux,
