@@ -57,6 +57,17 @@ taxonomy:
   # Inline CSV content (used when existingConfigMap is empty and inlineCsv is non-empty)
   inlineCsv: ""
 
+persistence:
+  # Enable a PersistentVolumeClaim to persist the pure-Go SQLite vector taxonomy DB (taxonomy.db)
+  enabled: false
+  existingClaim: ""
+  storageClass: ""
+  accessModes:
+    - ReadWriteOnce
+  size: 1Gi
+  mountPath: /var/lib/scans-ai-filer
+  annotations: {}
+
 resources:
   requests:
     cpu: 50m
@@ -69,6 +80,7 @@ podSecurityContext:
   runAsNonRoot: true
   runAsUser: 65532
   runAsGroup: 65532
+  fsGroup: 65532
   seccompProfile:
     type: RuntimeDefault
 
