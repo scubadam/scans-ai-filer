@@ -25,6 +25,30 @@ spec:
           {{- end }}
           securityContext:
             {{- toYaml .Values.podSecurityContext | nindent 12 }}
+          {{- if .Values.ocrSidecar.enabled }}
+          initContainers:
+            - name: ocr-sidecar
+              image: "{{ .Values.ocrSidecar.image.repository }}:{{ .Values.ocrSidecar.image.tag | default .Chart.AppVersion }}"
+              imagePullPolicy: {{ .Values.ocrSidecar.image.pullPolicy }}
+              restartPolicy: Always
+              securityContext:
+                {{- toYaml .Values.securityContext | nindent 16 }}
+              env:
+                - name: OCR_LISTEN_ADDR
+                  value: ":{{ .Values.ocrSidecar.port }}"
+                - name: OCR_LANG
+                  value: {{ .Values.ocrSidecar.lang | quote }}
+              ports:
+                - containerPort: {{ .Values.ocrSidecar.port }}
+              readinessProbe:
+                httpGet:
+                  path: /healthz
+                  port: {{ .Values.ocrSidecar.port }}
+                initialDelaySeconds: 1
+                periodSeconds: 2
+              resources:
+                {{- toYaml .Values.ocrSidecar.resources | nindent 16 }}
+          {{- end }}
           containers:
             - name: {{ .Chart.Name }}
               image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
@@ -73,6 +97,9 @@ spec:
                 {{- if .Values.config.ocrEndpointUrl }}
                 - name: OCR_ENDPOINT_URL
                   value: {{ .Values.config.ocrEndpointUrl | quote }}
+                {{- else if .Values.ocrSidecar.enabled }}
+                - name: OCR_ENDPOINT_URL
+                  value: "http://127.0.0.1:{{ .Values.ocrSidecar.port }}/ocr"
                 {{- end }}
                 {{- if .Values.config.ocrLang }}
                 - name: OCR_LANG

@@ -81,6 +81,24 @@ persistence:
   mountPath: /var/lib/scans-ai-filer
   annotations: {}
 
+ocrSidecar:
+  # Enable an ephemeral Kubernetes native sidecar (initContainer with restartPolicy: Always, K8s >= 1.29)
+  # running Tesseract HTTP OCR on 127.0.0.1:8085 only during CronJob runs (0 MB idle RAM).
+  enabled: false
+  image:
+    repository: ghcr.io/scubadam/scans-ai-filer-ocr
+    tag: "" # Defaults to Chart appVersion
+    pullPolicy: IfNotPresent
+  port: 8085
+  lang: "eng"
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 1000m
+      memory: 512Mi
+
 resources:
   requests:
     cpu: 50m
