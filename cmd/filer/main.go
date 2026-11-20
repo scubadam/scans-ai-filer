@@ -203,13 +203,6 @@ func main() {
 		return
 	}
 
-	rules := csvRules
-	if taxStore != nil {
-		if dbRules, listErr := taxStore.ListRules(ctx); listErr == nil && len(dbRules) > 0 {
-			rules = dbRules
-		}
-	}
-
 	ocrProv := ocr.AutoProvider(cfg.OCRProvider, cfg.OCREndpointURL, cfg.OCRLang, 60*time.Second)
 	if ocrProv != nil {
 		logger.Info("enabled deterministic OCR provider", "provider", ocrProv.Name(), "visual_glance_dim", cfg.OCRVisualGlanceDim, "hybrid_remote", cfg.OCRHybridRemote)
@@ -217,53 +210,87 @@ func main() {
 
 	notifier := notify.NewWebhookNotifier(cfg.WebhookURL, logger)
 
-	var anyErr error
-	for _, route := range cfg.InboxRoutes {
-		logger.Info("running inbox route", "inbox", route.InboxFolder, "ai_provider", route.AIProvider)
-
-		store, err := buildStorage(cfg, route.InboxFolder, logger)
-		if err != nil {
-			logger.Error("failed to build storage provider", "inbox", route.InboxFolder, "err", err)
-			anyErr = err
-			continue
+	runCycle := func() error {
+		curRules := csvRules
+		if taxStore != nil {
+			if dbRules, listErr := taxStore.ListRules(ctx); listErr == nil && len(dbRules) > 0 {
+				curRules = dbRules
+			}
 		}
 
-		aiProvider, err := buildAI(cfg, route.AIProvider, taxStore, ocrProv, logger)
-		if err != nil {
-			logger.Error("failed to build AI provider", "inbox", route.InboxFolder, "err", err)
-			anyErr = err
-			continue
-		}
+		var anyErr error
+		for _, route := range cfg.InboxRoutes {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			logger.Info("running inbox route", "inbox", route.InboxFolder, "ai_provider", route.AIProvider)
 
-		f := &filer.Filer{
-			Storage:       store,
-			AI:            aiProvider,
-			Notifier:      notifier,
-			TaxonomyStore: taxStore,
-			Logger:        logger,
-		}
-
-		_, err = f.Run(ctx, filer.Options{
-			ScansFolderName:  cfg.ScansFolderName,
-			BatchSize:        cfg.BatchSize,
-			PauseDuration:    time.Duration(cfg.PauseSeconds) * time.Second,
-			DryRun:           cfg.DryRun,
-			PDFPassword:      cfg.PDFPassword,
-			PDFOwnerPassword: cfg.PDFOwnerPassword,
-			Taxonomy:         rules,
-		})
-		if err != nil {
-			// If a secondary inbox folder simply hasn't been created yet in a multi-route setup, warn rather than aborting other routes
-			if len(cfg.InboxRoutes) > 1 && strings.Contains(err.Error(), "inbox folder") && strings.Contains(err.Error(), "not found") {
-				logger.Warn("secondary inbox folder not found; skipping route", "inbox", route.InboxFolder)
+			store, err := buildStorage(cfg, route.InboxFolder, logger)
+			if err != nil {
+				logger.Error("failed to build storage provider", "inbox", route.InboxFolder, "err", err)
+				anyErr = err
 				continue
 			}
-			logger.Error("inbox route failed", "inbox", route.InboxFolder, "err", err)
-			anyErr = err
+
+			aiProvider, err := buildAI(cfg, route.AIProvider, taxStore, ocrProv, logger)
+			if err != nil {
+				logger.Error("failed to build AI provider", "inbox", route.InboxFolder, "err", err)
+				anyErr = err
+				continue
+			}
+
+			f := &filer.Filer{
+				Storage:       store,
+				AI:            aiProvider,
+				Notifier:      notifier,
+				TaxonomyStore: taxStore,
+				Logger:        logger,
+			}
+
+			_, err = f.Run(ctx, filer.Options{
+				ScansFolderName:  cfg.ScansFolderName,
+				BatchSize:        cfg.BatchSize,
+				PauseDuration:    time.Duration(cfg.PauseSeconds) * time.Second,
+				DryRun:           cfg.DryRun,
+				PDFPassword:      cfg.PDFPassword,
+				PDFOwnerPassword: cfg.PDFOwnerPassword,
+				Taxonomy:         curRules,
+			})
+			if err != nil {
+				// If a secondary inbox folder simply hasn't been created yet in a multi-route setup, warn rather than aborting other routes
+				if len(cfg.InboxRoutes) > 1 && strings.Contains(err.Error(), "inbox folder") && strings.Contains(err.Error(), "not found") {
+					logger.Warn("secondary inbox folder not found; skipping route", "inbox", route.InboxFolder)
+					continue
+				}
+				logger.Error("inbox route failed", "inbox", route.InboxFolder, "err", err)
+				anyErr = err
+			}
 		}
+		return anyErr
 	}
 
-	if anyErr != nil {
-		os.Exit(1)
+	// Single-shot mode (CronJob / CLI)
+	if cfg.PollIntervalSeconds <= 0 {
+		if err := runCycle(); err != nil {
+			os.Exit(1)
+		}
+		return
+	}
+
+	// Continuous daemon mode (Deployment): run sequentially, sleeping only AFTER each cycle finishes
+	interval := time.Duration(cfg.PollIntervalSeconds) * time.Second
+	logger.Info("starting daemon poll loop", "poll_interval", interval.String(), "routes", len(cfg.InboxRoutes))
+	for {
+		if err := runCycle(); err != nil && ctx.Err() == nil {
+			logger.Warn("poll cycle completed with errors; will retry next interval", "err", err)
+		}
+		timer := time.NewTimer(interval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			logger.Info("received shutdown signal; exiting cleanly")
+			return
+		case <-timer.C:
+		}
 	}
 }

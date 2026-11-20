@@ -1,0 +1,22 @@
+{{- if eq .Values.workloadMode "deployment" }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "scans-ai-filer.fullname" . }}
+  labels:
+    {{- include "scans-ai-filer.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "scans-ai-filer.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "scans-ai-filer.labels" . | nindent 8 }}
+    spec:
+      restartPolicy: Always
+      {{- include "scans-ai-filer.podSpec" . | nindent 6 }}
+{{- end }}

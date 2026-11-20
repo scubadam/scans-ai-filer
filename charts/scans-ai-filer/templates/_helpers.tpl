@@ -15,10 +15,14 @@
 {{- end -}}
 {{- end -}}
 
-{{- define "scans-ai-filer.labels" -}}
-helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
+{{- define "scans-ai-filer.selectorLabels" -}}
 app.kubernetes.io/name: {{ include "scans-ai-filer.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end -}}
+
+{{- define "scans-ai-filer.labels" -}}
+helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
+{{ include "scans-ai-filer.selectorLabels" . }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
