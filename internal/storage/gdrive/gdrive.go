@@ -654,6 +654,9 @@ func (c *Client) ListFiledDocuments(ctx context.Context) ([]taxonomy.FiledDocume
 					continue
 				}
 				out = append(out, taxonomy.FiledDocument{
+					ID:          f.ID,
+					ParentID:    cur.id,
+					MimeType:    f.MimeType,
 					FolderPath:  cur.relPath,
 					Name:        f.Name,
 					Description: f.Description,
@@ -668,4 +671,169 @@ func (c *Client) ListFiledDocuments(ctx context.Context) ([]taxonomy.FiledDocume
 		}
 	}
 	return out, nil
+}
+
+// MoveFiledDocument moves and/or renames an already-filed document and updates its structured properties
+// without altering its description or binary contents.
+func (c *Client) MoveFiledDocument(ctx context.Context, fileID, oldParentID, newParentID, newName string, props map[string]string) error {
+	params := url.Values{}
+	params.Set("supportsAllDrives", "true")
+	params.Set("fields", "id, name, parents")
+	if newParentID != "" && newParentID != oldParentID {
+		params.Set("addParents", newParentID)
+		if oldParentID != "" {
+			params.Set("removeParents", oldParentID)
+		}
+	}
+	body := map[string]any{}
+	if strings.TrimSpace(newName) != "" {
+		body["name"] = newName
+	}
+	if len(props) > 0 {
+		body["properties"] = props
+	}
+	return c.doJSON(ctx, http.MethodPatch, "/files/"+url.PathEscape(fileID), params, body, nil)
+}
+
+// UpdateFiledContent replaces an already-filed document's binary content in place via multipart PATCH
+// (e.g. embedding searchable OCR + AES-256 encryption) and updates its name/properties.
+func (c *Client) UpdateFiledContent(ctx context.Context, fileID, newName, mimeType string, content []byte, props map[string]string) error {
+	tok, err := c.getAccessToken(ctx)
+	if err != nil {
+		return err
+	}
+	if mimeType == "" {
+		mimeType = "application/pdf"
+	}
+
+	boundary := fmt.Sprintf("scans_filer_upd_%d", time.Now().UnixNano())
+	metaMap := map[string]any{"mimeType": mimeType}
+	if strings.TrimSpace(newName) != "" {
+		metaMap["name"] = newName
+	}
+	if len(props) > 0 {
+		metaMap["properties"] = props
+	}
+	metadataJSON, err := json.Marshal(metaMap)
+	if err != nil {
+		return err
+	}
+
+	var body bytes.Buffer
+	fmt.Fprintf(&body, "--%s\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n", boundary)
+	body.Write(metadataJSON)
+	fmt.Fprintf(&body, "\r\n--%s\r\nContent-Type: %s\r\n\r\n", boundary, mimeType)
+	body.Write(content)
+	fmt.Fprintf(&body, "\r\n--%s--\r\n", boundary)
+
+	uploadParams := url.Values{}
+	uploadParams.Set("uploadType", "multipart")
+	uploadParams.Set("supportsAllDrives", "true")
+	uploadParams.Set("fields", "id, name")
+
+	uploadURL := strings.TrimRight(c.UploadBaseURL, "/") + "/files/" + url.PathEscape(fileID) + "?" + uploadParams.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, uploadURL, &body)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+tok)
+	req.Header.Set("Content-Type", "multipart/related; boundary="+boundary)
+
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("multipart content update failed: %w", err)
+	}
+	respBytes, readErr := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if readErr != nil {
+		return readErr
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("multipart content update returned HTTP %d: %s", resp.StatusCode, string(respBytes))
+	}
+	return nil
+}
+
+// PruneEmptyFolders walks the Scans folder tree bottom-up (skipping Inbox* and Unsorted)
+// and trashes/deletes empty folders left behind after reorganization.
+func (c *Client) PruneEmptyFolders(ctx context.Context) (int, error) {
+	if c.scansFolderID == "" {
+		return 0, fmt.Errorf("gdrive client not initialized")
+	}
+
+	type folderNode struct {
+		id      string
+		relPath string
+		depth   int
+	}
+	queue := []folderNode{{id: c.scansFolderID, relPath: "", depth: 0}}
+	var folders []folderNode
+
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+
+		params := url.Values{}
+		params.Set("q", fmt.Sprintf("'%s' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false", EscapeQuery(cur.id)))
+		params.Set("fields", "files(id, name)")
+		params.Set("pageSize", "200")
+		params.Set("supportsAllDrives", "true")
+		params.Set("includeItemsFromAllDrives", "true")
+
+		var resp struct {
+			Files []struct {
+				ID   string `json:"id"`
+				Name string `json:"name"`
+			} `json:"files"`
+		}
+		if err := c.doJSON(ctx, http.MethodGet, "/files", params, nil, &resp); err != nil {
+			return 0, err
+		}
+		for _, f := range resp.Files {
+			low := strings.ToLower(strings.TrimSpace(f.Name))
+			if cur.depth == 0 && (strings.HasPrefix(low, "inbox") || low == "unsorted") {
+				continue
+			}
+			rel := f.Name
+			if cur.relPath != "" {
+				rel = cur.relPath + "/" + f.Name
+			}
+			node := folderNode{id: f.ID, relPath: rel, depth: cur.depth + 1}
+			folders = append(folders, node)
+			queue = append(queue, node)
+		}
+	}
+
+	// Process deepest folders first so newly emptied parents can also be pruned
+	pruned := 0
+	for i := len(folders) - 1; i >= 0; i-- {
+		node := folders[i]
+		params := url.Values{}
+		params.Set("q", fmt.Sprintf("'%s' in parents and trashed = false", EscapeQuery(node.id)))
+		params.Set("fields", "files(id)")
+		params.Set("pageSize", "1")
+		params.Set("supportsAllDrives", "true")
+		params.Set("includeItemsFromAllDrives", "true")
+
+		var resp struct {
+			Files []struct {
+				ID string `json:"id"`
+			} `json:"files"`
+		}
+		if err := c.doJSON(ctx, http.MethodGet, "/files", params, nil, &resp); err != nil {
+			continue
+		}
+		if len(resp.Files) == 0 {
+			// Trash the empty folder (safe, recoverable, and works for shared Editor SAs)
+			trashParams := url.Values{}
+			trashParams.Set("supportsAllDrives", "true")
+			if err := c.doJSON(ctx, http.MethodPatch, "/files/"+url.PathEscape(node.id), trashParams, map[string]any{"trashed": true}, nil); err != nil {
+				c.Logger.Warn("failed to prune empty folder", "folder", node.relPath, "err", err)
+				continue
+			}
+			c.Logger.Info("pruned empty folder", "folder", node.relPath)
+			pruned++
+		}
+	}
+	return pruned, nil
 }

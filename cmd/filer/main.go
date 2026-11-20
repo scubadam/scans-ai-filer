@@ -15,6 +15,7 @@ import (
 	"github.com/scubadam/scans-ai-filer/internal/config"
 	"github.com/scubadam/scans-ai-filer/internal/embed"
 	"github.com/scubadam/scans-ai-filer/internal/filer"
+	"github.com/scubadam/scans-ai-filer/internal/maint"
 	"github.com/scubadam/scans-ai-filer/internal/notify"
 	"github.com/scubadam/scans-ai-filer/internal/ocr"
 	"github.com/scubadam/scans-ai-filer/internal/storage"
@@ -103,8 +104,13 @@ func buildAI(cfg *config.Config, providerName string, taxStore taxonomy.Store, o
 }
 
 func main() {
-	dryRunFlag := flag.Bool("dry-run", false, "Analyze documents without modifying storage or sending notifications")
+	dryRunFlag := flag.Bool("dry-run", false, "Analyze documents or preview maintenance actions without modifying storage or DB")
 	bootstrapFlag := flag.Bool("bootstrap-taxonomy", false, "Walk already-filed documents in storage, print diff vs taxonomy.csv, and populate TAXONOMY_DB_PATH")
+	tidyFlag := flag.Bool("tidy-taxonomy", false, "Use AI Gardener to propose/apply taxonomy consolidations and merges in TAXONOMY_DB_PATH")
+	reorgFlag := flag.Bool("reorg-storage", false, "Reorganize existing filed documents in storage to match canonical TAXONOMY_DB_PATH rules")
+	sanitizeNamesFlag := flag.Bool("sanitize-filenames", false, "When used with --reorg-storage, also run an AI audit to scrub PII from filenames")
+	backfillFlag := flag.Bool("backfill-pdfs", false, "Idempotently embed searchable OCR and/or AES-256 encryption into existing filed documents")
+	limitFlag := flag.Int("limit", 0, "Optional maximum number of files to process in --reorg-storage or --backfill-pdfs (0 = unlimited)")
 	flag.Parse()
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
@@ -145,11 +151,13 @@ func main() {
 		defer taxStore.Close()
 		logger.Info("opened taxonomy vector store", "path", cfg.TaxonomyDBPath, "embedder", embedName)
 
-		if len(csvRules) > 0 && !*bootstrapFlag {
-			if n, seedErr := taxStore.SeedFromRules(ctx, csvRules, "csv"); seedErr != nil {
-				logger.Warn("failed to seed taxonomy DB from CSV", "err", seedErr)
-			} else {
-				logger.Info("synced taxonomy CSV into vector store", "rules", n)
+		if len(csvRules) > 0 && !*bootstrapFlag && !*tidyFlag && !*reorgFlag && !*backfillFlag {
+			if st, stErr := taxStore.Stats(ctx); stErr == nil && st.RuleCount == 0 {
+				if n, seedErr := taxStore.SeedFromRules(ctx, csvRules, "csv"); seedErr != nil {
+					logger.Warn("failed to seed taxonomy DB from CSV", "err", seedErr)
+				} else {
+					logger.Info("seeded empty taxonomy DB from CSV", "rules", n)
+				}
 			}
 		}
 	}
@@ -206,6 +214,94 @@ func main() {
 	ocrProv := ocr.AutoProvider(cfg.OCRProvider, cfg.OCREndpointURL, cfg.OCRLang, 60*time.Second)
 	if ocrProv != nil {
 		logger.Info("enabled deterministic OCR provider", "provider", ocrProv.Name(), "visual_glance_dim", cfg.OCRVisualGlanceDim, "hybrid_remote", cfg.OCRHybridRemote, "embed_pdf", cfg.OCREmbedPDF)
+	}
+
+	// Maintenance Mode 1: AI Taxonomy Gardener (--tidy-taxonomy)
+	if *tidyFlag {
+		aiProv, err := buildAI(cfg, cfg.InboxRoutes[0].AIProvider, taxStore, ocrProv, logger)
+		if err != nil {
+			logger.Error("failed to build AI provider for tidy", "err", err)
+			os.Exit(1)
+		}
+		completer, ok := aiProv.(ai.TextCompleter)
+		if !ok {
+			logger.Error("configured AI provider does not support text JSON completions", "provider", aiProv.Name())
+			os.Exit(1)
+		}
+		res, err := maint.TidyTaxonomy(ctx, taxStore, completer, cfg.DryRun, logger)
+		if err != nil {
+			logger.Error("taxonomy tidy failed", "err", err)
+			os.Exit(1)
+		}
+		fmt.Println("\n" + maint.FormatTidyReport(res, cfg.DryRun))
+		return
+	}
+
+	// Maintenance Mode 2: Storage Reorganizer (--reorg-storage [--sanitize-filenames])
+	if *reorgFlag {
+		store, err := buildStorage(cfg, cfg.InboxRoutes[0].InboxFolder, logger)
+		if err != nil {
+			logger.Error("failed to build storage provider for reorg", "err", err)
+			os.Exit(1)
+		}
+		if err := store.Init(ctx); err != nil {
+			logger.Error("failed to initialize storage for reorg", "err", err)
+			os.Exit(1)
+		}
+		maintStore, ok := store.(storage.MaintenanceProvider)
+		if !ok {
+			logger.Error("storage provider does not support maintenance reorganization", "provider", store.Name())
+			os.Exit(1)
+		}
+		var completer ai.TextCompleter
+		if *sanitizeNamesFlag {
+			if aiProv, err := buildAI(cfg, cfg.InboxRoutes[0].AIProvider, taxStore, ocrProv, logger); err == nil {
+				completer, _ = aiProv.(ai.TextCompleter)
+			}
+		}
+		res, err := maint.ReorgStorage(ctx, store, maintStore, taxStore, completer, maint.ReorgOptions{
+			DryRun:            cfg.DryRun,
+			SanitizeFilenames: *sanitizeNamesFlag,
+			PruneEmpty:        true,
+			Limit:             *limitFlag,
+		}, logger)
+		if err != nil {
+			logger.Error("storage reorg failed", "err", err)
+			os.Exit(1)
+		}
+		fmt.Println("\n" + maint.FormatReorgReport(res, cfg.DryRun))
+		return
+	}
+
+	// Maintenance Mode 3: Searchable OCR + AES-256 PDF Backfill (--backfill-pdfs [--limit N])
+	if *backfillFlag {
+		store, err := buildStorage(cfg, cfg.InboxRoutes[0].InboxFolder, logger)
+		if err != nil {
+			logger.Error("failed to build storage provider for backfill", "err", err)
+			os.Exit(1)
+		}
+		if err := store.Init(ctx); err != nil {
+			logger.Error("failed to initialize storage for backfill", "err", err)
+			os.Exit(1)
+		}
+		maintStore, ok := store.(storage.MaintenanceProvider)
+		if !ok {
+			logger.Error("storage provider does not support maintenance backfill", "provider", store.Name())
+			os.Exit(1)
+		}
+		res, err := maint.BackfillPDFs(ctx, store, maintStore, ocrProv, maint.BackfillOptions{
+			DryRun:           cfg.DryRun,
+			Limit:            *limitFlag,
+			EmbedOCR:         cfg.OCREmbedPDF,
+			PDFPassword:      cfg.PDFPassword,
+			PDFOwnerPassword: cfg.PDFOwnerPassword,
+		}, logger)
+		if err != nil {
+			logger.Error("PDF backfill failed", "err", err)
+			os.Exit(1)
+		}
+		fmt.Println("\n" + maint.FormatBackfillReport(res, cfg.DryRun))
+		return
 	}
 
 	notifier := notify.NewWebhookNotifier(cfg.WebhookURL, logger)

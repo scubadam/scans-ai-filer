@@ -37,6 +37,12 @@ type Provider interface {
 	AnalyzeDocument(ctx context.Context, input DocumentInput) (*FilingMetadata, error)
 }
 
+// TextCompleter is an optional capability for text-only structured JSON completions
+// (used by maintenance operations such as AI taxonomy tidying and filename PII audits).
+type TextCompleter interface {
+	CompleteJSON(ctx context.Context, prompt string) (string, error)
+}
+
 // BuildClassificationPrompt generates the shared taxonomy-guided, PII-sanitized prompt.
 func BuildClassificationPrompt(input DocumentInput) string {
 	taxonomyText := taxonomy.FormatForPrompt(input.Taxonomy)

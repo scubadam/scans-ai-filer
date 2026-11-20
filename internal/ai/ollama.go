@@ -96,6 +96,17 @@ func NewOllamaOpenAIProvider(baseURL, apiKey, modelName string, timeout time.Dur
 
 func (o *OllamaOpenAIProvider) Name() string { return "ollama:" + o.Model }
 
+// CompleteJSON runs a text-only structured JSON completion using the configured text model.
+func (o *OllamaOpenAIProvider) CompleteJSON(ctx context.Context, prompt string) (string, error) {
+	content, err := o.chatCompletion(ctx, o.textModel(), []map[string]any{
+		{"type": "text", "text": prompt},
+	}, true)
+	if err != nil {
+		return "", err
+	}
+	return extractJSONObject(content), nil
+}
+
 func (o *OllamaOpenAIProvider) textModel() string {
 	if strings.TrimSpace(o.TextModel) != "" {
 		return strings.TrimSpace(o.TextModel)

@@ -9,6 +9,9 @@ import (
 // FiledDocument represents an already-filed document discovered in storage (e.g. Google Drive Scans/ tree)
 // used to bootstrap or recalculate the taxonomy database and diff against taxonomy.csv.
 type FiledDocument struct {
+	ID          string            // Storage file identifier
+	ParentID    string            // Immediate parent folder identifier
+	MimeType    string            // MIME type (e.g. application/pdf, image/jpeg)
 	FolderPath  string            // Relative to Scans root, e.g. "Utilities/Energy/Octopus Energy/2026"
 	Name        string            // Filename
 	Description string            // Raw storage description (legacy "Details:" lines are stripped automatically)
