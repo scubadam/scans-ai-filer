@@ -54,7 +54,13 @@ taxonomy:
   # Optional: reference an existing ConfigMap containing a taxonomy.csv key
   existingConfigMap: ""
   key: "taxonomy.csv"
-  # Inline CSV content (used when existingConfigMap is empty and inlineCsv is non-empty)
+  # Optional: inline CSV seed (leave empty to use fallback/AI-inferred categories or bootstrap from existing storage with --bootstrap-taxonomy)
+  # Example:
+  # inlineCsv: |
+  #   Category,Subcategory,Organization,Keywords,Path_Template,Description
+  #   Utilities,Energy,Example Energy,"electric, gas, tariff",Utilities/Energy/Example Energy/{year},Energy supplier bills
+  #   Finance,Banking,Example Bank,"bank statement, current account",Finance/Banking/Example Bank/{year},Bank statements
+  #   Healthcare,Medical Records,General Hospital,"appointment, clinic, hospital",Healthcare/Medical Records/General Hospital/{year},Hospital letters
   inlineCsv: ""
 
 persistence:
