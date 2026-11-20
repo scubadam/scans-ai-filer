@@ -217,48 +217,125 @@ func matchDocToRule(doc taxonomy.FiledDocument, rules []taxonomy.Rule) (taxonomy
 	if v := strings.TrimSpace(doc.Properties["organization"]); v != "" {
 		candidates = append(candidates, v)
 	}
+	docCat := strings.TrimSpace(doc.Properties["category"])
+	docSub := strings.TrimSpace(doc.Properties["subcategory"])
 	for _, line := range strings.Split(doc.Description, "\n") {
-		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(line)), "issuer:") {
-			if v := strings.TrimSpace(line[strings.IndexByte(line, ':')+1:]); v != "" {
-				candidates = append(candidates, v)
+		low := strings.ToLower(strings.TrimSpace(line))
+		if idx := strings.IndexByte(line, ':'); idx > 0 {
+			val := strings.TrimSpace(line[idx+1:])
+			switch {
+			case strings.HasPrefix(low, "issuer:") && val != "":
+				candidates = append(candidates, val)
+			case strings.HasPrefix(low, "category:") && docCat == "" && val != "":
+				docCat = val
+			case strings.HasPrefix(low, "subcategory:") && docSub == "" && val != "":
+				docSub = val
 			}
 		}
 	}
-	for _, seg := range strings.Split(doc.FolderPath, "/") {
+	pathSegs := strings.Split(doc.FolderPath, "/")
+	for i, seg := range pathSegs {
 		seg = strings.TrimSpace(seg)
-		if seg != "" && !taxonomy.IsYear(seg) {
-			candidates = append(candidates, seg)
+		if seg == "" || taxonomy.IsYear(seg) {
+			continue
 		}
+		if i == 0 && docCat == "" {
+			docCat = seg
+		}
+		if i == 1 && docSub == "" && len(pathSegs) >= 3 {
+			docSub = seg
+		}
+		candidates = append(candidates, seg)
 	}
 
-	// Pass 1: exact normalized organization match
+	// Collect ALL matching rules (an organization can legitimately appear in multiple categories,
+	// e.g. Direct Line in Vehicle > Insurance AND Housing > Insurance, or an NHS Trust in Employment AND Healthcare).
+	var exactMatches []taxonomy.Rule
+	seenExact := make(map[int]bool)
 	for _, cand := range candidates {
 		nc := taxonomy.NormalizeName(cand)
 		if nc == "" {
 			continue
 		}
-		for _, r := range rules {
-			if taxonomy.NormalizeName(r.Organization) == nc {
-				return r, true
+		for i, r := range rules {
+			if !seenExact[i] && taxonomy.NormalizeName(r.Organization) == nc {
+				exactMatches = append(exactMatches, r)
+				seenExact[i] = true
 			}
 		}
 	}
 
+	if len(exactMatches) == 1 {
+		return exactMatches[0], true
+	}
+	if len(exactMatches) > 1 {
+		return pickBestRuleForDoc(doc, docCat, docSub, exactMatches), true
+	}
+
 	// Pass 2: alias match in comma-separated Keywords (e.g. "Kingsland House" merged into "Barchester Healthcare")
+	var aliasMatches []taxonomy.Rule
+	seenAlias := make(map[int]bool)
 	for _, cand := range candidates {
 		nc := taxonomy.NormalizeName(cand)
 		if len(nc) < 4 {
 			continue
 		}
-		for _, r := range rules {
+		for i, r := range rules {
+			if seenAlias[i] {
+				continue
+			}
 			for _, kw := range strings.Split(r.Keywords, ",") {
 				if taxonomy.NormalizeName(kw) == nc {
-					return r, true
+					aliasMatches = append(aliasMatches, r)
+					seenAlias[i] = true
+					break
 				}
 			}
 		}
 	}
+	if len(aliasMatches) == 1 {
+		return aliasMatches[0], true
+	}
+	if len(aliasMatches) > 1 {
+		return pickBestRuleForDoc(doc, docCat, docSub, aliasMatches), true
+	}
 	return taxonomy.Rule{}, false
+}
+
+// pickBestRuleForDoc disambiguates multi-category organizations using the document's existing
+// category, subcategory, folder path, and filename/description keyword overlap.
+func pickBestRuleForDoc(doc taxonomy.FiledDocument, docCat, docSub string, candidates []taxonomy.Rule) taxonomy.Rule {
+	normDocCat := taxonomy.NormalizeName(docCat)
+	normDocSub := taxonomy.NormalizeName(docSub)
+	yr := extractDocYear(doc)
+	haystack := strings.ToLower(doc.FolderPath + " " + doc.Name + " " + doc.Description)
+
+	best := candidates[0]
+	bestScore := -1
+	for _, r := range candidates {
+		score := 0
+		// Strongest signal: document is already in this exact rule's folder
+		if strings.EqualFold(substitutePathYear(r.PathTemplate, yr), strings.Trim(doc.FolderPath, "/")) {
+			score += 50
+		}
+		if normDocCat != "" && taxonomy.NormalizeName(r.Category) == normDocCat {
+			score += 20
+		}
+		if normDocSub != "" && taxonomy.NormalizeName(r.Subcategory) == normDocSub {
+			score += 10
+		}
+		for _, kw := range strings.Split(r.Keywords, ",") {
+			kw = strings.ToLower(strings.TrimSpace(kw))
+			if len(kw) >= 3 && strings.Contains(haystack, kw) {
+				score += 3
+			}
+		}
+		if score > bestScore {
+			bestScore = score
+			best = r
+		}
+	}
+	return best
 }
 
 func extractDocYear(doc taxonomy.FiledDocument) string {

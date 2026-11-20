@@ -192,3 +192,30 @@ func TestTidyAndReorgAndBackfill(t *testing.T) {
 		t.Errorf("expected encrypted+searchable properties on doc-1, got: %+v", mStore.updateProps["doc-1"])
 	}
 }
+
+func TestMultiCategoryOrgDisambiguation(t *testing.T) {
+	rules := []taxonomy.Rule{
+		{Category: "Housing", Subcategory: "Insurance", Organization: "Direct Line", Keywords: "home insurance, buildings, contents", PathTemplate: "Housing/Insurance/Direct Line/{year}"},
+		{Category: "Vehicle", Subcategory: "Insurance", Organization: "Direct Line", Keywords: "car insurance, motor, breakdown", PathTemplate: "Vehicle/Insurance/Direct Line/{year}"},
+	}
+
+	carDoc := taxonomy.FiledDocument{
+		FolderPath: "Vehicle/Insurance/Direct Line/2018",
+		Name:       "2018-08-15 - Direct Line - Car Insurance Renewal Notice.pdf",
+		Properties: map[string]string{"organization": "Direct Line", "category": "Vehicle"},
+	}
+	matched, ok := matchDocToRule(carDoc, rules)
+	if !ok || matched.Category != "Vehicle" {
+		t.Fatalf("expected Vehicle rule for car insurance doc, got: %+v (ok=%v)", matched, ok)
+	}
+
+	homeDoc := taxonomy.FiledDocument{
+		FolderPath: "Housing/Direct Line/2018",
+		Name:       "2018-05-01 - Direct Line - Home Insurance Policy.pdf",
+		Properties: map[string]string{"organization": "Direct Line", "category": "Housing"},
+	}
+	matched, ok = matchDocToRule(homeDoc, rules)
+	if !ok || matched.Category != "Housing" {
+		t.Fatalf("expected Housing rule for home insurance doc, got: %+v (ok=%v)", matched, ok)
+	}
+}
