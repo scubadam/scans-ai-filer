@@ -53,9 +53,10 @@ type Config struct {
 	EmbeddingProvider string
 	EmbeddingModel    string
 	TaxonomyTopK      int
-	BatchSize         int
-	PauseSeconds      int
-	DryRun            bool
+	BatchSize           int
+	PauseSeconds        int
+	PollIntervalSeconds int
+	DryRun              bool
 
 	// Optional AES-256 PDF password encryption before filing
 	PDFPassword      string
@@ -106,6 +107,15 @@ func Load(dryRunFlag bool) (*Config, error) {
 			return nil, fmt.Errorf("invalid PAUSE_SECONDS %q: must be >= 0", raw)
 		}
 		pauseSec = v
+	}
+
+	pollIntervalSec := 0
+	if raw := strings.TrimSpace(os.Getenv("POLL_INTERVAL_SECONDS")); raw != "" {
+		v, err := strconv.Atoi(raw)
+		if err != nil || v < 0 {
+			return nil, fmt.Errorf("invalid POLL_INTERVAL_SECONDS %q: must be >= 0", raw)
+		}
+		pollIntervalSec = v
 	}
 
 	ollamaTimeout := 300
@@ -230,6 +240,7 @@ func Load(dryRunFlag bool) (*Config, error) {
 		TaxonomyTopK:          taxonomyTopK,
 		BatchSize:             batchSize,
 		PauseSeconds:          pauseSec,
+		PollIntervalSeconds:   pollIntervalSec,
 		DryRun:                dryRun,
 		PDFPassword:           strings.TrimSpace(os.Getenv("PDF_PASSWORD")),
 		PDFOwnerPassword:      strings.TrimSpace(os.Getenv("PDF_OWNER_PASSWORD")),

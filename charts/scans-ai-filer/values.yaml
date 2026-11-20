@@ -7,6 +7,10 @@ imagePullSecrets: []
 nameOverride: ""
 fullnameOverride: ""
 
+# Workload mode: "deployment" (always-on sequential poll daemon, best with persistence PVC) or "cronjob"
+workloadMode: "cronjob"
+
+# CronJob settings (only used when workloadMode == "cronjob")
 schedule: "*/10 * * * *"
 concurrencyPolicy: Forbid
 successfulJobsHistoryLimit: 3
@@ -18,6 +22,8 @@ config:
   storageProvider: "gdrive"
   aiProvider: "gemini"
   geminiModel: "gemini-2.5-flash"
+  # Poll interval in seconds when workloadMode == "deployment" (0 = single-shot)
+  pollIntervalSeconds: 60
   # Optional multi-inbox routing, e.g. "Inbox:gemini,Inbox-Local:ollama"
   inboxRoutes: ""
   ollamaBaseUrl: "http://ollama-service.default.svc.cluster.local:11434/v1"
