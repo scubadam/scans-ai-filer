@@ -69,6 +69,9 @@ spec:
                 {{- if .Values.config.taxonomyDbPath }}
                 - name: TAXONOMY_DB_PATH
                   value: {{ .Values.config.taxonomyDbPath | quote }}
+                {{- else if .Values.persistence.enabled }}
+                - name: TAXONOMY_DB_PATH
+                  value: "{{ .Values.persistence.mountPath }}/taxonomy.db"
                 {{- end }}
                 {{- if .Values.config.embeddingProvider }}
                 - name: EMBEDDING_PROVIDER
@@ -127,6 +130,10 @@ spec:
                   mountPath: /etc/scans-ai-filer
                   readOnly: true
                 {{- end }}
+                {{- if .Values.persistence.enabled }}
+                - name: data
+                  mountPath: {{ .Values.persistence.mountPath }}
+                {{- end }}
           volumes:
             - name: gdrive-sa
               secret:
@@ -142,6 +149,11 @@ spec:
             - name: taxonomy
               configMap:
                 name: {{ include "scans-ai-filer.fullname" . }}-taxonomy
+            {{- end }}
+            {{- if .Values.persistence.enabled }}
+            - name: data
+              persistentVolumeClaim:
+                claimName: {{ .Values.persistence.existingClaim | default (printf "%s-data" (include "scans-ai-filer.fullname" .)) }}
             {{- end }}
           {{- with .Values.nodeSelector }}
           nodeSelector:
