@@ -58,6 +58,29 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Extract OCR Sidecar Docker metadata
+        id: meta-ocr
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/${{ github.repository }}-ocr
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=${{ github.event.inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' }}
+
+      - name: Build & Push Multi-Arch OCR Sidecar Image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile.ocr
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta-ocr.outputs.tags }}
+          labels: ${{ steps.meta-ocr.outputs.labels }}
+          cache-from: type=gha,scope=ocr
+          cache-to: type=gha,scope=ocr,mode=max
+
       - name: Set up Helm
         uses: azure/setup-helm@v5
 
