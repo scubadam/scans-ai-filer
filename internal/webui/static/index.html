@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#0f172a" />
+  <link rel="manifest" href="/manifest.json" />
+  <title>Scans AI Filer — Taxonomy &amp; Review</title>
+  <style>
+    :root {
+      --bg: #0f172a; --panel: #1e293b; --panel-2: #334155; --border: #334155;
+      --text: #f1f5f9; --muted: #94a3b8; --accent: #38bdf8; --accent-2: #0284c7;
+      --ok: #22c55e; --warn: #f59e0b; --bad: #ef4444;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.45; }
+    header { position: sticky; top: 0; z-index: 10; background: rgba(15,23,42,.92); backdrop-filter: blur(8px); border-bottom: 1px solid var(--border); padding: 12px 16px; display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+    header h1 { margin: 0; font-size: 1.1rem; display: flex; align-items: center; gap: 8px; }
+    .stats { display: flex; gap: 8px; flex-wrap: wrap; font-size: 0.8rem; }
+    .pill { background: var(--panel); border: 1px solid var(--border); border-radius: 999px; padding: 3px 10px; color: var(--muted); }
+    .pill b { color: var(--text); }
+    .pill.warn b { color: var(--warn); }
+    nav { display: flex; gap: 6px; padding: 10px 16px 0; border-bottom: 1px solid var(--border); overflow-x: auto; }
+    nav button { background: none; border: none; color: var(--muted); padding: 10px 14px; font-size: 0.9rem; font-weight: 600; cursor: pointer; border-bottom: 2px solid transparent; white-space: nowrap; }
+    nav button.active { color: var(--accent); border-bottom-color: var(--accent); }
+    main { max-width: 1100px; margin: 0 auto; padding: 16px; }
+    .tab { display: none; }
+    .tab.active { display: block; }
+    .toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; align-items: center; }
+    input, textarea, select { background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 8px 11px; font-size: 0.9rem; }
+    input:focus, textarea:focus, select:focus { outline: 2px solid var(--accent); border-color: transparent; }
+    .grow { flex: 1; min-width: 180px; }
+    button.btn { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 8px 13px; font-size: 0.85rem; font-weight: 600; cursor: pointer; }
+    button.btn:hover { filter: brightness(1.12); }
+    button.btn.primary { background: var(--accent-2); border-color: var(--accent); }
+    button.btn.ok { background: #15803d; border-color: var(--ok); }
+    button.btn.danger { background: #991b1b; border-color: var(--bad); }
+    button.btn.sm { padding: 5px 9px; font-size: 0.78rem; }
+    .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; }
+    .card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; flex-wrap: wrap; }
+    .title { font-weight: 700; font-size: 0.98rem; }
+    .path { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.8rem; color: var(--accent); margin: 4px 0; word-break: break-all; }
+    .meta { font-size: 0.8rem; color: var(--muted); display: flex; gap: 10px; flex-wrap: wrap; margin-top: 4px; }
+    .badge { display: inline-block; padding: 2px 7px; border-radius: 6px; font-size: 0.74rem; font-weight: 700; }
+    .badge.ok { background: rgba(34,197,94,.16); color: #4ade80; }
+    .badge.warn { background: rgba(245,158,11,.18); color: #fbbf24; }
+    .badge.bad { background: rgba(239,68,68,.18); color: #f87171; }
+    .badge.info { background: rgba(56,189,248,.16); color: var(--accent); }
+    .actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+    pre.log { background: #020617; border: 1px solid var(--border); border-radius: 8px; padding: 12px; overflow-x: auto; font-size: 0.8rem; white-space: pre-wrap; max-height: 460px; }
+    .bar { height: 6px; background: var(--panel-2); border-radius: 999px; overflow: hidden; margin-top: 6px; }
+    .bar > div { height: 100%; background: var(--accent); }
+    dialog { background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 12px; width: min(520px, 94vw); padding: 18px; }
+    dialog::backdrop { background: rgba(2,6,23,.75); }
+    .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
+    .field label { font-size: 0.8rem; color: var(--muted); font-weight: 600; }
+    .toast { position: fixed; bottom: 18px; right: 18px; background: var(--panel-2); border: 1px solid var(--accent); padding: 10px 14px; border-radius: 8px; font-size: 0.85rem; display: none; z-index: 50; }
+    .empty { color: var(--muted); text-align: center; padding: 28px 12px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>📂 Scans AI Filer</h1>
+    <div class="stats" id="statsBar"></div>
+  </header>
+
+  <nav>
+    <button class="active" data-tab="review">Review Queue</button>
+    <button data-tab="rules">Taxonomy Rules</button>
+    <button data-tab="search">Vector Search</button>
+    <button data-tab="tools">Actions &amp; Gardener</button>
+  </nav>
+
+  <main>
+    <!-- REVIEW QUEUE -->
+    <section id="tab-review" class="tab active">
+      <div class="toolbar">
+        <span style="color:var(--muted);font-size:.86rem;">Unconfirmed self-learned rules &amp; low-confidence filings appear first.</span>
+        <button class="btn sm" onclick="loadAll()">↻ Refresh</button>
+      </div>
+      <h3 style="margin:6px 0 10px;font-size:.95rem;">Unconfirmed Learned Rules</h3>
+      <div id="unconfirmedRules"></div>
+      <h3 style="margin:18px 0 10px;font-size:.95rem;">Recent Filings (Lowest Confidence First)</h3>
+      <div id="reviewHistory"></div>
+    </section>
+
+    <!-- TAXONOMY RULES -->
+    <section id="tab-rules" class="tab">
+      <div class="toolbar">
+        <input class="grow" id="ruleFilter" placeholder="Filter by organization, category, or keywords..." oninput="renderRules()" />
+        <button class="btn primary" onclick="openRuleModal()">+ Add Rule</button>
+        <a class="btn" href="/api/export.csv" download="taxonomy.csv" style="text-decoration:none;">⬇ Export CSV</a>
+      </div>
+      <div id="rulesList"></div>
+    </section>
+
+    <!-- VECTOR SEARCH -->
+    <section id="tab-search" class="tab">
+      <div class="toolbar">
+        <input class="grow" id="searchQuery" placeholder="Test semantic vector search (e.g. Kingsland House deposit confirmation)..." onkeydown="if(event.key==='Enter')runSearch()" />
+        <button class="btn primary" onclick="runSearch()">Search</button>
+      </div>
+      <div id="searchResults"></div>
+    </section>
+
+    <!-- ACTIONS -->
+    <section id="tab-tools" class="tab">
+      <div class="card">
+        <div class="title">⚡ Immediate Inbox Scan</div>
+        <div class="meta">Trigger the daemon poll loop immediately without waiting for the next poll interval.</div>
+        <div class="actions">
+          <button class="btn primary" onclick="triggerScan()">Scan Now</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="title">🌿 AI Taxonomy Gardener</div>
+        <div class="meta">Ask the AI to detect duplicate organizations, subsidiaries, or category drift in taxonomy.db.</div>
+        <div class="actions">
+          <button class="btn" onclick="runTidy(true)">Preview Tidy (Dry-Run)</button>
+          <button class="btn ok" onclick="runTidy(false)">Apply AI Tidy</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="title">🗂 Storage Reorganizer &amp; Filename PII Clean</div>
+        <div class="meta">Move filed Drive documents into canonical taxonomy.db paths and optionally scrub PII from old filenames.</div>
+        <div class="actions">
+          <label style="display:flex;align-items:center;gap:6px;font-size:.85rem;color:var(--muted);">
+            <input type="checkbox" id="chkSanitize" checked /> Sanitize PII filenames
+          </label>
+          <button class="btn" onclick="runReorg(true)">Preview Reorg (Dry-Run)</button>
+          <button class="btn danger" onclick="runReorg(false)">Execute Reorg</button>
+        </div>
+      </div>
+      <pre class="log" id="actionOutput" style="display:none;"></pre>
+    </section>
+  </main>
+
+  <!-- RULE EDIT MODAL -->
+  <dialog id="ruleModal">
+    <h3 id="modalTitle" style="margin-top:0;">Edit Taxonomy Rule</h3>
+    <input type="hidden" id="editId" />
+    <div class="field"><label>Category *</label><input id="fCat" placeholder="Healthcare" /></div>
+    <div class="field"><label>Subcategory</label><input id="fSub" placeholder="Residential Care" /></div>
+    <div class="field"><label>Organization *</label><input id="fOrg" placeholder="Barchester Healthcare Homes Limited" /></div>
+    <div class="field"><label>Keywords (comma-separated aliases &amp; terms)</label><input id="fKw" placeholder="care home, Kingsland House" /></div>
+    <div class="field"><label>Path Template</label><input id="fPath" placeholder="Healthcare/Residential Care/Barchester Healthcare Homes Limited/{year}" /></div>
+    <div class="field"><label>Description</label><input id="fDesc" placeholder="Optional note" /></div>
+    <div class="actions" style="justify-content:flex-end;">
+      <button class="btn" onclick="document.getElementById('ruleModal').close()">Cancel</button>
+      <button class="btn primary" onclick="saveRule()">Save &amp; Re-embed</button>
+    </div>
+  </dialog>
+
+  <!-- MERGE MODAL -->
+  <dialog id="mergeModal">
+    <h3 style="margin-top:0;">Merge Rule into Canonical Target</h3>
+    <p id="mergeDesc" style="color:var(--muted);font-size:.88rem;"></p>
+    <input type="hidden" id="mergeSourceId" />
+    <div class="field">
+      <label>Target Canonical Rule</label>
+      <select id="mergeTargetSelect"></select>
+    </div>
+    <div class="actions" style="justify-content:flex-end;">
+      <button class="btn" onclick="document.getElementById('mergeModal').close()">Cancel</button>
+      <button class="btn ok" onclick="confirmMerge()">Merge &amp; Preserve Alias</button>
+    </div>
+  </dialog>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    let allRules = [], allHistory = [];
+
+    document.querySelectorAll('nav button').forEach(btn => {
+      btn.onclick = () => {
+        document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        btn.classList.add('active');
+        document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+      };
+    });
+
+    function toast(msg) {
+      const el = document.getElementById('toast');
+      el.textContent = msg;
+      el.style.display = 'block';
+      clearTimeout(el._t);
+      el._t = setTimeout(() => el.style.display = 'none', 3200);
+    }
+
+    function esc(s) {
+      return (s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+
+    function confBadge(c) {
+      const pct = Math.round((c || 0) * 100);
+      const cls = pct >= 85 ? 'ok' : pct >= 70 ? 'warn' : 'bad';
+      return `<span class="badge ${cls}">${pct}% conf</span>`;
+    }
+
+    async function api(path, opts = {}) {
+      const res = await fetch(path, { headers: {'Content-Type': 'application/json'}, ...opts });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+      return data;
+    }
+
+    async function loadAll() {
+      try {
+        const [st, r, h] = await Promise.all([api('/api/stats'), api('/api/rules'), api('/api/history?limit=120')]);
+        allRules = r.rules || [];
+        allHistory = h.history || [];
+        const s = st.stats || {};
+        document.getElementById('statsBar').innerHTML = `
+          <span class="pill">Rules: <b>${s.rule_count || 0}</b></span>
+          <span class="pill">History: <b>${s.history_count || 0}</b></span>
+          <span class="pill ${(s.unconfirmed_rules || 0) > 0 ? 'warn' : ''}">Unconfirmed: <b>${s.unconfirmed_rules || 0}</b></span>
+          <span class="pill ${(s.low_conf_unreviewed || 0) > 0 ? 'warn' : ''}">Low-Conf: <b>${s.low_conf_unreviewed || 0}</b></span>
+        `;
+        renderReview();
+        renderRules();
+      } catch (e) { toast('Load failed: ' + e.message); }
+    }
+
+    function renderReview() {
+      const unconf = allRules.filter(r => !r.confirmed);
+      document.getElementById('unconfirmedRules').innerHTML = unconf.length === 0
+        ? '<div class="empty">All taxonomy rules are confirmed.</div>'
+        : unconf.map(r => `
+          <div class="card">
+            <div class="card-head">
+              <div>
+                <div class="title">${esc(r.organization)}</div>
+                <div class="path">${esc(r.path_template)}</div>
+              </div>
+              <div>${confBadge(r.confidence)} <span class="badge info">${esc(r.source)} · ${r.evidence_count}x</span></div>
+            </div>
+            <div class="meta"><span>${esc(r.category)}${r.subcategory ? ' › ' + esc(r.subcategory) : ''}</span><span>Keywords: ${esc(r.keywords || '—')}</span></div>
+            <div class="actions">
+              <button class="btn sm ok" onclick="confirmRule(${r.id})">✓ Confirm</button>
+              <button class="btn sm" onclick="openRuleModal(${r.id})">✎ Edit</button>
+              <button class="btn sm" onclick="openMergeModal(${r.id})">⇄ Merge into…</button>
+              <button class="btn sm danger" onclick="deleteRule(${r.id})">✕ Delete</button>
+            </div>
+          </div>`).join('');
+
+      document.getElementById('reviewHistory').innerHTML = allHistory.length === 0
+        ? '<div class="empty">No filing history recorded yet.</div>'
+        : allHistory.slice(0, 40).map(h => `
+          <div class="card">
+            <div class="card-head">
+              <div>
+                <div class="title">${esc(h.organization)} — ${esc(h.document_type || 'Document')}</div>
+                <div class="path">${esc(h.folder_path)}</div>
+              </div>
+              <div>${confBadge(h.confidence)} ${h.reviewed ? '<span class="badge ok">Reviewed</span>' : '<span class="badge warn">Needs Review</span>'}</div>
+            </div>
+            <div class="meta">
+              <span>${esc(h.summary)}</span>
+              ${h.confidence_reason ? `<span>Reason: ${esc(h.confidence_reason)}</span>` : ''}
+            </div>
+            ${!h.reviewed ? `<div class="actions"><button class="btn sm ok" onclick="markReviewed(${h.id})">✓ Mark Reviewed</button></div>` : ''}
+          </div>`).join('');
+    }
+
+    function renderRules() {
+      const q = (document.getElementById('ruleFilter').value || '').toLowerCase().trim();
+      const filtered = allRules.filter(r => !q || (r.organization + ' ' + r.category + ' ' + r.subcategory + ' ' + r.keywords + ' ' + r.path_template).toLowerCase().includes(q));
+      document.getElementById('rulesList').innerHTML = filtered.length === 0
+        ? '<div class="empty">No matching rules.</div>'
+        : filtered.map(r => `
+          <div class="card">
+            <div class="card-head">
+              <div>
+                <div class="title">${esc(r.organization)}</div>
+                <div class="path">${esc(r.path_template)}</div>
+              </div>
+              <div>${r.confirmed ? '<span class="badge ok">Confirmed</span>' : confBadge(r.confidence)} <span class="badge info">${r.evidence_count}x</span></div>
+            </div>
+            <div class="meta"><span>${esc(r.category)}${r.subcategory ? ' › ' + esc(r.subcategory) : ''}</span><span>Keywords: ${esc(r.keywords || '—')}</span></div>
+            <div class="actions">
+              <button class="btn sm" onclick="openRuleModal(${r.id})">✎ Edit</button>
+              <button class="btn sm" onclick="openMergeModal(${r.id})">⇄ Merge…</button>
+              <button class="btn sm danger" onclick="deleteRule(${r.id})">✕ Delete</button>
+            </div>
+          </div>`).join('');
+    }
+
+    function openRuleModal(id) {
+      const r = id ? allRules.find(x => x.id === id) : null;
+      document.getElementById('modalTitle').textContent = r ? 'Edit Taxonomy Rule' : 'Add Taxonomy Rule';
+      document.getElementById('editId').value = r ? r.id : '';
+      document.getElementById('fCat').value = r ? r.category : '';
+      document.getElementById('fSub').value = r ? r.subcategory : '';
+      document.getElementById('fOrg').value = r ? r.organization : '';
+      document.getElementById('fKw').value = r ? r.keywords : '';
+      document.getElementById('fPath').value = r ? r.path_template : '';
+      document.getElementById('fDesc').value = r ? r.description : '';
+      document.getElementById('ruleModal').showModal();
+    }
+
+    async function saveRule() {
+      const id = document.getElementById('editId').value;
+      const body = {
+        category: document.getElementById('fCat').value,
+        subcategory: document.getElementById('fSub').value,
+        organization: document.getElementById('fOrg').value,
+        keywords: document.getElementById('fKw').value,
+        path_template: document.getElementById('fPath').value,
+        description: document.getElementById('fDesc').value,
+        confirmed: true,
+      };
+      try {
+        if (id) await api('/api/rules/' + id, { method: 'PUT', body: JSON.stringify(body) });
+        else await api('/api/rules', { method: 'POST', body: JSON.stringify(body) });
+        document.getElementById('ruleModal').close();
+        toast('Rule saved & re-embedded');
+        loadAll();
+      } catch (e) { toast('Save error: ' + e.message); }
+    }
+
+    async function confirmRule(id) {
+      const r = allRules.find(x => x.id === id);
+      if (!r) return;
+      try {
+        await api('/api/rules/' + id, { method: 'PUT', body: JSON.stringify({ ...r, confirmed: true }) });
+        toast('Confirmed ' + r.organization);
+        loadAll();
+      } catch (e) { toast('Error: ' + e.message); }
+    }
+
+    async function deleteRule(id) {
+      const r = allRules.find(x => x.id === id);
+      if (!confirm('Delete rule "' + (r ? r.organization : id) + '"?')) return;
+      try {
+        await api('/api/rules/' + id, { method: 'DELETE' });
+        toast('Rule deleted');
+        loadAll();
+      } catch (e) { toast('Error: ' + e.message); }
+    }
+
+    function openMergeModal(sourceId) {
+      const src = allRules.find(x => x.id === sourceId);
+      if (!src) return;
+      document.getElementById('mergeSourceId').value = sourceId;
+      document.getElementById('mergeDesc').textContent = `Merge "${src.organization}" (${src.category}) into another rule. "${src.organization}" will be added to the target's keywords.`;
+      const sel = document.getElementById('mergeTargetSelect');
+      sel.innerHTML = allRules.filter(r => r.id !== sourceId)
+        .sort((a,b) => a.organization.localeCompare(b.organization))
+        .map(r => `<option value="${r.id}">${esc(r.organization)} [${esc(r.category)}${r.subcategory ? ' › ' + esc(r.subcategory) : ''}]</option>`)
+        .join('');
+      document.getElementById('mergeModal').showModal();
+    }
+
+    async function confirmMerge() {
+      const source_id = Number(document.getElementById('mergeSourceId').value);
+      const target_id = Number(document.getElementById('mergeTargetSelect').value);
+      try {
+        await api('/api/rules/merge', { method: 'POST', body: JSON.stringify({ source_id, target_id }) });
+        document.getElementById('mergeModal').close();
+        toast('Merged & re-embedded!');
+        loadAll();
+      } catch (e) { toast('Merge failed: ' + e.message); }
+    }
+
+    async function markReviewed(id) {
+      try {
+        await api('/api/history/' + id + '/review', { method: 'POST' });
+        toast('Marked reviewed');
+        loadAll();
+      } catch (e) { toast('Error: ' + e.message); }
+    }
+
+    async function runSearch() {
+      const q = document.getElementById('searchQuery').value.trim();
+      if (!q) return;
+      const out = document.getElementById('searchResults');
+      out.innerHTML = '<div class="empty">Searching vector index…</div>';
+      try {
+        const res = await api('/api/search', { method: 'POST', body: JSON.stringify({ query: q, top_k: 8 }) });
+        const sr = res.scored_rules || [];
+        const se = res.scored_examples || [];
+        let html = '<h3 style="font-size:.95rem;">Top Matching Taxonomy Rules</h3>';
+        html += sr.length === 0 ? '<div class="empty">No vector matches.</div>' : sr.map(x => {
+          const pct = Math.max(0, Math.min(100, Math.round(x.score * 100)));
+          return `<div class="card"><div class="card-head"><div class="title">${esc(x.rule.Organization)}</div><span class="badge info">${pct}% match</span></div><div class="path">${esc(x.rule.PathTemplate)}</div><div class="meta">${esc(x.rule.Category)} › ${esc(x.rule.Subcategory)} · Keywords: ${esc(x.rule.Keywords)}</div><div class="bar"><div style="width:${pct}%"></div></div></div>`;
+        }).join('');
+        html += '<h3 style="font-size:.95rem;margin-top:16px;">Similar Past Filings</h3>';
+        html += se.length === 0 ? '<div class="empty">No similar past filings above threshold.</div>' : se.map(x => {
+          const pct = Math.max(0, Math.min(100, Math.round(x.score * 100)));
+          return `<div class="card"><div class="card-head"><div class="title">${esc(x.example.organization)} — ${esc(x.example.document_type)}</div><span class="badge info">${pct}% match</span></div><div class="path">${esc(x.example.folder_path)}</div><div class="meta">${esc(x.example.summary)}</div></div>`;
+        }).join('');
+        out.innerHTML = html;
+      } catch (e) { out.innerHTML = '<div class="empty">Search error: ' + esc(e.message) + '</div>'; }
+    }
+
+    async function triggerScan() {
+      try {
+        const res = await api('/api/actions/scan-now', { method: 'POST' });
+        toast(res.triggered ? 'Scan cycle triggered!' : 'Scan already running or queued');
+      } catch (e) { toast('Error: ' + e.message); }
+    }
+
+    async function runTidy(dryRun) {
+      if (!dryRun && !confirm('Apply AI Gardener merges/updates to taxonomy.db?')) return;
+      const out = document.getElementById('actionOutput');
+      out.style.display = 'block';
+      out.textContent = 'Running AI Taxonomy Gardener…';
+      try {
+        const res = await api('/api/actions/tidy', { method: 'POST', body: JSON.stringify({ dry_run: dryRun }) });
+        out.textContent = res.report || JSON.stringify(res, null, 2);
+        if (!dryRun) loadAll();
+      } catch (e) { out.textContent = 'Error: ' + e.message; }
+    }
+
+    async function runReorg(dryRun) {
+      const sanitize = document.getElementById('chkSanitize').checked;
+      if (!dryRun && !confirm('Execute live Drive folder moves/renames now?')) return;
+      const out = document.getElementById('actionOutput');
+      out.style.display = 'block';
+      out.textContent = 'Walking Drive & computing reorg plan (takes ~1 min)…';
+      try {
+        const res = await api('/api/actions/reorg', { method: 'POST', body: JSON.stringify({ dry_run: dryRun, sanitize_filenames: sanitize }) });
+        out.textContent = res.report || JSON.stringify(res, null, 2);
+      } catch (e) { out.textContent = 'Error: ' + e.message; }
+    }
+
+    loadAll();
+  </script>
+</body>
+</html>

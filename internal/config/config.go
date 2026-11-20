@@ -65,6 +65,10 @@ type Config struct {
 
 	// Optional sanitized webhook notification (compatible with Home Assistant webhooks)
 	WebhookURL string
+
+	// Optional embedded Taxonomy Browser/Editor PWA (used in Deployment daemon mode)
+	WebUIEnabled bool
+	WebUIAddr    string
 }
 
 // ParseInboxRoutes parses a comma-separated list of "FolderName:provider" pairs.
@@ -183,6 +187,11 @@ func Load(dryRunFlag bool) (*Config, error) {
 		ocrEmbedPDF = true
 	}
 
+	webUIEnabled := false
+	if raw := strings.ToLower(strings.TrimSpace(os.Getenv("WEB_UI_ENABLED"))); raw == "1" || raw == "true" || raw == "yes" {
+		webUIEnabled = true
+	}
+
 	dryRun := dryRunFlag
 	if !dryRun {
 		v := strings.ToLower(strings.TrimSpace(os.Getenv("DRY_RUN")))
@@ -252,6 +261,8 @@ func Load(dryRunFlag bool) (*Config, error) {
 		PDFPassword:           strings.TrimSpace(os.Getenv("PDF_PASSWORD")),
 		PDFOwnerPassword:      strings.TrimSpace(os.Getenv("PDF_OWNER_PASSWORD")),
 		WebhookURL:            webhookURL,
+		WebUIEnabled:          webUIEnabled,
+		WebUIAddr:             envOrDefault("WEB_UI_ADDR", ":8080"),
 	}
 
 	if err := cfg.Validate(); err != nil {

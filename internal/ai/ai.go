@@ -20,15 +20,17 @@ type DocumentInput struct {
 
 // FilingMetadata is the structured, PII-sanitized classification returned by an AI provider.
 type FilingMetadata struct {
-	DocumentDate        string `json:"document_date"`
-	Organization        string `json:"organization"`
-	DocumentType        string `json:"document_type"`
-	Category            string `json:"category"`
-	Subcategory         string `json:"subcategory"`
-	Summary             string `json:"summary"`
-	SuggestedFilename   string `json:"suggested_filename"`
-	SuggestedFolderPath string `json:"suggested_folder_path"`
-	IsTaxonomyMatch     bool   `json:"is_taxonomy_match"`
+	DocumentDate        string  `json:"document_date"`
+	Organization        string  `json:"organization"`
+	DocumentType        string  `json:"document_type"`
+	Category            string  `json:"category"`
+	Subcategory         string  `json:"subcategory"`
+	Summary             string  `json:"summary"`
+	SuggestedFilename   string  `json:"suggested_filename"`
+	SuggestedFolderPath string  `json:"suggested_folder_path"`
+	IsTaxonomyMatch     bool    `json:"is_taxonomy_match"`
+	Confidence          float64 `json:"confidence"`
+	ConfidenceReason    string  `json:"confidence_reason"`
 }
 
 // Provider abstracts document classification across cloud or local vision/LLM backends.
@@ -85,5 +87,7 @@ Determine:
    "YYYY-MM-DD - [Organization] - [Document Type] - [Summary]%s"
 8. suggested_folder_path: Target directory path derived from the matched template or fallback rule.
 9. is_taxonomy_match: Boolean indicating whether an existing taxonomy entry was matched.
+10. confidence: Number between 0.0 and 1.0 reflecting your certainty in the category, organization, and folder choice (0.90-1.00 = clear letterhead + taxonomy match; 0.70-0.89 = clear document, novel org; 0.00-0.69 = sparse/ambiguous evidence or uncertain guess).
+11. confidence_reason: Brief 3 to 10 word PII-free explanation of your confidence score (e.g. "Exact letterhead matched taxonomy rule" or "Sparse deposit slip from unknown organization").
 `, taxonomyText, input.FallbackDate, input.FallbackExt)
 }

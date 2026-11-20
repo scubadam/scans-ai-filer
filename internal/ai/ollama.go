@@ -159,7 +159,9 @@ IMPORTANT: Return ONLY a single valid JSON object (no markdown fences, no commen
   "summary": "2 to 5 word generic PII-free summary",
   "suggested_filename": "YYYY-MM-DD - Organization - Document Type - Summary.pdf",
   "suggested_folder_path": "Category/Organization/YYYY",
-  "is_taxonomy_match": false
+  "is_taxonomy_match": false,
+  "confidence": 0.85,
+  "confidence_reason": "Clear letterhead and document type"
 }`
 
 	content, err := o.chatCompletion(ctx, o.textModel(), []map[string]any{
