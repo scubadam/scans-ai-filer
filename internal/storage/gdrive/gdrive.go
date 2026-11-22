@@ -128,6 +128,22 @@ func parseRSAPrivateKey(pemStr string) (*rsa.PrivateKey, error) {
 
 func (c *Client) Name() string { return "gdrive" }
 
+// FileURL returns the Google Drive web viewer URL for fileID (implements storage.LinkProvider).
+func (c *Client) FileURL(fileID string) string {
+	if strings.TrimSpace(fileID) == "" {
+		return ""
+	}
+	return "https://drive.google.com/file/d/" + url.PathEscape(fileID) + "/view"
+}
+
+// FolderURL returns the Google Drive web folder URL for folderID (implements storage.LinkProvider).
+func (c *Client) FolderURL(folderID string) string {
+	if strings.TrimSpace(folderID) == "" {
+		return ""
+	}
+	return "https://drive.google.com/drive/folders/" + url.PathEscape(folderID)
+}
+
 // EscapeQuery escapes single quotes and backslashes for Google Drive q parameters.
 func EscapeQuery(s string) string {
 	s = strings.ReplaceAll(s, `\`, `\\`)

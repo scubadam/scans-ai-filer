@@ -37,10 +37,11 @@ func NewWebhookNotifier(url string, logger *slog.Logger) *WebhookNotifier {
 func (w *WebhookNotifier) Name() string { return "webhook" }
 
 type webhookPayload struct {
-	Title   string `json:"title"`
-	Message string `json:"message"`
-	Count   int    `json:"count"`
-	Failed  int    `json:"failed"`
+	Title   string      `json:"title"`
+	Message string      `json:"message"`
+	Count   int         `json:"count"`
+	Failed  int         `json:"failed"`
+	Items   []FiledItem `json:"items,omitempty"`
 }
 
 // Send posts a privacy-safe filing summary to the configured webhook URL.
@@ -60,6 +61,7 @@ func (w *WebhookNotifier) Send(ctx context.Context, items []FiledItem, failedCou
 		Message: msg,
 		Count:   succeeded,
 		Failed:  failedCount,
+		Items:   items,
 	})
 	if err != nil {
 		return err

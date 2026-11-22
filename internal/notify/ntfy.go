@@ -100,8 +100,16 @@ func (n *NtfyNotifier) Send(ctx context.Context, items []FiledItem, failedCount 
 	req.Header.Set("Title", title)
 	req.Header.Set("Priority", priority)
 	req.Header.Set("Tags", tags)
-	if n.cfg.ClickURL != "" {
-		req.Header.Set("Click", n.cfg.ClickURL)
+
+	clickURL := n.cfg.ClickURL
+	if clickURL == "" && len(items) == 1 && items[0].FileURL != "" {
+		clickURL = items[0].FileURL
+	}
+	if clickURL != "" {
+		req.Header.Set("Click", clickURL)
+	}
+	if actions := buildNtfyActions(items); actions != "" {
+		req.Header.Set("Actions", actions)
 	}
 	if n.cfg.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+n.cfg.Token)
@@ -120,4 +128,29 @@ func (n *NtfyNotifier) Send(ctx context.Context, items []FiledItem, failedCount 
 		return fmt.Errorf("ntfy returned HTTP %d: %s", resp.StatusCode, string(b))
 	}
 	return nil
+}
+
+// buildNtfyActions formats optional storage deep-link action buttons for ntfy's Actions header.
+func buildNtfyActions(items []FiledItem) string {
+	if len(items) == 0 {
+		return ""
+	}
+	var actions []string
+	if len(items) == 1 {
+		if items[0].FileURL != "" {
+			actions = append(actions, "view, Open File, "+items[0].FileURL)
+		}
+		if items[0].FolderURL != "" {
+			actions = append(actions, "view, Open Folder, "+items[0].FolderURL)
+		}
+		return strings.Join(actions, "; ")
+	}
+	// Multi-file batch: surface a folder button if all items share a folder, or the first available folder link.
+	for _, it := range items {
+		if it.FolderURL != "" {
+			actions = append(actions, "view, Open Folder, "+it.FolderURL)
+			break
+		}
+	}
+	return strings.Join(actions, "; ")
 }

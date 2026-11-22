@@ -16,6 +16,7 @@ func TestNtfyNotifierSuccessAndErrorRouting(t *testing.T) {
 		Priority string
 		Tags     string
 		Click    string
+		Actions  string
 		Auth     string
 		Body     string
 	}
@@ -29,6 +30,7 @@ func TestNtfyNotifierSuccessAndErrorRouting(t *testing.T) {
 			Priority: r.Header.Get("Priority"),
 			Tags:     r.Header.Get("Tags"),
 			Click:    r.Header.Get("Click"),
+			Actions:  r.Header.Get("Actions"),
 			Auth:     r.Header.Get("Authorization"),
 			Body:     string(body),
 		})
@@ -48,9 +50,14 @@ func TestNtfyNotifierSuccessAndErrorRouting(t *testing.T) {
 
 	ctx := context.Background()
 
-	// 1. Pure success -> routes to Topic with success priority/tags & Bearer auth.
+	// 1. Pure success -> routes to Topic with success priority/tags, Bearer auth & Drive action buttons.
 	err := n.Send(ctx, []FiledItem{
-		{Filename: "2026-11-22 - Acme Bank - Statement.pdf", Folder: "Scans/Finance/Acme Bank/2026"},
+		{
+			Filename:  "2026-11-22 - Acme Bank - Statement.pdf",
+			Folder:    "Scans/Finance/Acme Bank/2026",
+			FileURL:   "https://drive.google.com/file/d/file123/view",
+			FolderURL: "https://drive.google.com/drive/folders/dir456",
+		},
 	}, 0)
 	if err != nil {
 		t.Fatalf("success Send failed: %v", err)
@@ -71,6 +78,10 @@ func TestNtfyNotifierSuccessAndErrorRouting(t *testing.T) {
 	}
 	if !strings.Contains(reqs[0].Title, "1 document filed") || !strings.Contains(reqs[0].Body, "Acme Bank - Statement.pdf") {
 		t.Errorf("unexpected success title/body: %+v", reqs[0])
+	}
+	wantActions := "view, Open File, https://drive.google.com/file/d/file123/view; view, Open Folder, https://drive.google.com/drive/folders/dir456"
+	if reqs[0].Actions != wantActions {
+		t.Errorf("unexpected Actions header:\n got: %q\nwant: %q", reqs[0].Actions, wantActions)
 	}
 
 	if reqs[1].Path != "/scans-errors" || reqs[1].Priority != "urgent" || !strings.Contains(reqs[1].Tags, "warning") {
