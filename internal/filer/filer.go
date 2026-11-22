@@ -348,10 +348,15 @@ func (f *Filer) processOne(ctx context.Context, item storage.InboxFile, opts Opt
 		}
 	}
 
-	return notify.FiledItem{
+	filed := notify.FiledItem{
 		Filename: finalFilename,
 		Folder:   opts.ScansFolderName + "/" + targetFolderPath,
-	}, false, nil
+	}
+	if lp, ok := f.Storage.(storage.LinkProvider); ok {
+		filed.FileURL = lp.FileURL(item.ID)
+		filed.FolderURL = lp.FolderURL(destFolderID)
+	}
+	return filed, false, nil
 }
 
 func deriveFallbackDate(item storage.InboxFile, now time.Time) string {

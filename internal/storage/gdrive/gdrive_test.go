@@ -282,3 +282,16 @@ func TestGDriveInitCachingAndInvalidation(t *testing.T) {
 		t.Errorf("expected Inbox lookup count 3 after TTL expiry, got %d", got)
 	}
 }
+
+func TestGDriveLinkProvider(t *testing.T) {
+	var lp storage.LinkProvider = &Client{}
+	if got := lp.FileURL("abc123"); got != "https://drive.google.com/file/d/abc123/view" {
+		t.Errorf("unexpected FileURL: %q", got)
+	}
+	if got := lp.FolderURL("dir456"); got != "https://drive.google.com/drive/folders/dir456" {
+		t.Errorf("unexpected FolderURL: %q", got)
+	}
+	if got := lp.FileURL(""); got != "" {
+		t.Errorf("expected empty FileURL for empty ID, got %q", got)
+	}
+}
