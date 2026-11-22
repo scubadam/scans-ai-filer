@@ -20,6 +20,7 @@ import (
 	"github.com/scubadam/scans-ai-filer/internal/ocr"
 	"github.com/scubadam/scans-ai-filer/internal/storage"
 	"github.com/scubadam/scans-ai-filer/internal/storage/gdrive"
+	localstorage "github.com/scubadam/scans-ai-filer/internal/storage/local"
 	"github.com/scubadam/scans-ai-filer/internal/taxonomy"
 	"github.com/scubadam/scans-ai-filer/internal/webui"
 )
@@ -31,6 +32,8 @@ func buildStorage(cfg *config.Config, inboxFolder string, logger *slog.Logger) (
 			return gdrive.NewFromJSON([]byte(cfg.GoogleCredentialsJSON), cfg.ScansFolderName, inboxFolder, logger)
 		}
 		return gdrive.NewFromFile(cfg.GoogleCredentialsPath, cfg.ScansFolderName, inboxFolder, logger)
+	case "local":
+		return localstorage.New(cfg.LocalRootPath, inboxFolder, logger), nil
 	default:
 		return nil, fmt.Errorf("unsupported storage provider %q", cfg.StorageProvider)
 	}

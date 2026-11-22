@@ -19,6 +19,7 @@ type Config struct {
 	StorageProvider string
 	ScansFolderName string
 	InboxFolderName string
+	LocalRootPath   string
 
 	// Multi-inbox routing (defaults to single route InboxFolderName -> AIProvider when INBOX_ROUTES is unset)
 	InboxRoutes []InboxRoute
@@ -229,6 +230,7 @@ func Load(dryRunFlag bool) (*Config, error) {
 		StorageProvider:       envOrDefault("STORAGE_PROVIDER", "gdrive"),
 		ScansFolderName:       envOrDefault("SCANS_FOLDER_NAME", "Scans"),
 		InboxFolderName:       inboxFolder,
+		LocalRootPath:         envOrDefault("LOCAL_ROOT_PATH", "/data/scans"),
 		InboxRoutes:           routes,
 		GoogleCredentialsPath: envOrDefault("GOOGLE_APPLICATION_CREDENTIALS", "/etc/gdrive/gdrive-sa.json"),
 		GoogleCredentialsJSON: strings.TrimSpace(os.Getenv("GDRIVE_SA_JSON")),
@@ -278,8 +280,12 @@ func (c *Config) Validate() error {
 		if c.GoogleCredentialsJSON == "" && c.GoogleCredentialsPath == "" {
 			return fmt.Errorf("gdrive storage requires GOOGLE_APPLICATION_CREDENTIALS or GDRIVE_SA_JSON")
 		}
+	case "local":
+		if strings.TrimSpace(c.LocalRootPath) == "" {
+			return fmt.Errorf("local storage requires LOCAL_ROOT_PATH")
+		}
 	default:
-		return fmt.Errorf("unsupported STORAGE_PROVIDER %q (supported: gdrive)", c.StorageProvider)
+		return fmt.Errorf("unsupported STORAGE_PROVIDER %q (supported: gdrive, local)", c.StorageProvider)
 	}
 
 	if len(c.InboxRoutes) == 0 {
