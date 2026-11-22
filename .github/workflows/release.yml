@@ -7,9 +7,14 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag to release (e.g. v0.1.0)'
+        description: 'Tag to release (e.g. v0.10.2)'
         required: true
-        default: 'v0.1.0'
+        default: 'v0.10.2'
+      rebuild_ocr:
+        description: 'Force rebuild of multi-arch OCR sidecar image'
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: write
@@ -22,9 +27,8 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v7
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -44,10 +48,10 @@ jobs:
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=latest
             type=raw,value=${{ github.event.inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' }}
 
-      - name: Build & Push Multi-Arch Container Image
+      - name: Build & Push Multi-Arch Main Container Image
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -66,10 +70,48 @@ jobs:
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=latest
             type=raw,value=${{ github.event.inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' }}
 
+      - name: Detect whether OCR sidecar changed since previous tag
+        id: ocr-check
+        run: |
+          OCR_REPO="ghcr.io/${{ github.repository }}-ocr"
+          PREV_TAG=$(git tag --sort=-v:refname 'v*' | grep -v "^${GITHUB_REF_NAME}$" | head -n 1 || true)
+          SRC_IMAGE=""
+          REBUILD="false"
+
+          if docker buildx imagetools inspect "${OCR_REPO}:latest" >/dev/null 2>&1; then
+            SRC_IMAGE="${OCR_REPO}:latest"
+          elif [[ -n "$PREV_TAG" ]] && docker buildx imagetools inspect "${OCR_REPO}:${PREV_TAG#v}" >/dev/null 2>&1; then
+            SRC_IMAGE="${OCR_REPO}:${PREV_TAG#v}"
+          fi
+
+          if [[ "${{ github.event.inputs.rebuild_ocr }}" == "true" ]]; then
+            echo "Forced OCR rebuild requested."
+            REBUILD="true"
+          elif [[ -z "$SRC_IMAGE" ]]; then
+            echo "No existing OCR manifest found; full OCR build required."
+            REBUILD="true"
+          elif [[ -n "$PREV_TAG" ]]; then
+            CHANGED=$(git diff --name-only "$PREV_TAG..HEAD" -- Dockerfile.ocr cmd/ocr-server/ || true)
+            if [[ -n "$CHANGED" ]]; then
+              echo "OCR files changed since $PREV_TAG:"
+              echo "$CHANGED"
+              REBUILD="true"
+            else
+              echo "No OCR changes since $PREV_TAG; will fast re-tag $SRC_IMAGE."
+            fi
+          fi
+          echo "rebuild=$REBUILD" >> "$GITHUB_OUTPUT"
+          echo "src_image=$SRC_IMAGE" >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU (only when OCR sidecar rebuilds)
+        if: steps.ocr-check.outputs.rebuild == 'true'
+        uses: docker/setup-qemu-action@v4
+
       - name: Build & Push Multi-Arch OCR Sidecar Image
+        if: steps.ocr-check.outputs.rebuild == 'true'
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -80,6 +122,22 @@ jobs:
           labels: ${{ steps.meta-ocr.outputs.labels }}
           cache-from: type=gha,scope=ocr
           cache-to: type=gha,scope=ocr,mode=max
+
+      - name: Fast Re-tag Existing Multi-Arch OCR Sidecar Manifest
+        if: steps.ocr-check.outputs.rebuild != 'true'
+        env:
+          OCR_TAGS: ${{ steps.meta-ocr.outputs.tags }}
+          SRC_IMAGE: ${{ steps.ocr-check.outputs.src_image }}
+        run: |
+          ARGS=()
+          while IFS= read -r tag; do
+            [[ -z "$tag" || "$tag" == "$SRC_IMAGE" ]] && continue
+            ARGS+=(-t "$tag")
+          done <<< "$OCR_TAGS"
+          if [[ ${#ARGS[@]} -gt 0 ]]; then
+            echo "Re-tagging $SRC_IMAGE -> ${ARGS[*]}"
+            docker buildx imagetools create "${ARGS[@]}" "$SRC_IMAGE"
+          fi
 
       - name: Set up Helm
         uses: azure/setup-helm@v5
