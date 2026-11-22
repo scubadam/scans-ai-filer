@@ -84,7 +84,7 @@ func TestHTTPProviderPlainJSONAndPDF(t *testing.T) {
 
 	pPlain := NewHTTPProvider(srv.URL+"/plain", 5*time.Second)
 	txt, err = pPlain.ExtractImageText(context.Background(), []byte("fakeimg"), "image/jpeg")
-	if err != nil || !strings.Contains(txt, "Example Hospital") {
+	if err != nil || !strings.Contains(txt, "Example General Hospital") {
 		t.Fatalf("expected plain OCR text, got %q err=%v", txt, err)
 	}
 }
