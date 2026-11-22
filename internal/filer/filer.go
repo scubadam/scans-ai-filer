@@ -68,7 +68,7 @@ func (f *Filer) Run(ctx context.Context, opts Options) (*Result, error) {
 	}
 
 	start := f.Now()
-	f.Logger.Info("starting scans-ai-filer batch",
+	f.Logger.Debug("starting scans-ai-filer batch",
 		"storage", f.Storage.Name(),
 		"ai", f.AI.Name(),
 		"batch_size", opts.BatchSize,
@@ -86,7 +86,7 @@ func (f *Filer) Run(ctx context.Context, opts Options) (*Result, error) {
 		return nil, fmt.Errorf("list inbox: %w", err)
 	}
 	if len(files) == 0 {
-		f.Logger.Info("inbox is empty; nothing to process")
+		f.Logger.Debug("inbox is empty; nothing to process")
 		return &Result{}, nil
 	}
 
