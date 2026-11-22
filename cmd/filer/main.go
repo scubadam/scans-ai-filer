@@ -306,6 +306,7 @@ func main() {
 	}
 
 	notifier := notify.NewWebhookNotifier(cfg.WebhookURL, logger)
+	routeStores := make(map[string]storage.Provider, len(cfg.InboxRoutes))
 
 	runCycle := func() error {
 		curRules := csvRules
@@ -322,11 +323,16 @@ func main() {
 			}
 			logger.Info("running inbox route", "inbox", route.InboxFolder, "ai_provider", route.AIProvider)
 
-			store, err := buildStorage(cfg, route.InboxFolder, logger)
-			if err != nil {
-				logger.Error("failed to build storage provider", "inbox", route.InboxFolder, "err", err)
-				anyErr = err
-				continue
+			store, ok := routeStores[route.InboxFolder]
+			if !ok {
+				var err error
+				store, err = buildStorage(cfg, route.InboxFolder, logger)
+				if err != nil {
+					logger.Error("failed to build storage provider", "inbox", route.InboxFolder, "err", err)
+					anyErr = err
+					continue
+				}
+				routeStores[route.InboxFolder] = store
 			}
 
 			aiProvider, err := buildAI(cfg, route.AIProvider, taxStore, ocrProv, logger)

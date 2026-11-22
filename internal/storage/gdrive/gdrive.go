@@ -31,6 +31,7 @@ const (
 	defaultDriveUploadBaseURL = "https://www.googleapis.com/upload/drive/v3"
 	defaultTokenURL           = "https://oauth2.googleapis.com/token"
 	driveScope                = "https://www.googleapis.com/auth/drive"
+	defaultFolderCacheTTL     = 6 * time.Hour
 )
 
 // ServiceAccountKey mirrors the JSON fields of a Google Service Account key file.
@@ -47,14 +48,17 @@ type Client struct {
 	scansFolderName string
 	inboxFolderName string
 
-	BaseURL       string
-	UploadBaseURL string
-	TokenURL      string
-	HTTPClient    *http.Client
-	Logger        *slog.Logger
+	BaseURL        string
+	UploadBaseURL  string
+	TokenURL       string
+	HTTPClient     *http.Client
+	Logger         *slog.Logger
+	FolderCacheTTL time.Duration
 
-	scansFolderID string
-	inboxFolderID string
+	folderMu          sync.RWMutex
+	scansFolderID     string
+	inboxFolderID     string
+	foldersResolvedAt time.Time
 
 	mu          sync.Mutex
 	accessToken string
@@ -103,6 +107,7 @@ func NewFromJSON(raw []byte, scansFolder, inboxFolder string, logger *slog.Logge
 		TokenURL:        tokenURL,
 		HTTPClient:      &http.Client{Timeout: 60 * time.Second},
 		Logger:          logger,
+		FolderCacheTTL:  defaultFolderCacheTTL,
 	}, nil
 }
 
@@ -278,8 +283,39 @@ func (c *Client) listFiles(ctx context.Context, q, fields string, pageSize int) 
 	return out.Files, nil
 }
 
+// InvalidateFolderCache clears cached root/inbox folder IDs so the next Init re-resolves them.
+func (c *Client) InvalidateFolderCache() {
+	c.folderMu.Lock()
+	c.scansFolderID = ""
+	c.inboxFolderID = ""
+	c.foldersResolvedAt = time.Time{}
+	c.folderMu.Unlock()
+}
+
+func (c *Client) getScansFolderID() string {
+	c.folderMu.RLock()
+	defer c.folderMu.RUnlock()
+	return c.scansFolderID
+}
+
+func (c *Client) getInboxFolderID() string {
+	c.folderMu.RLock()
+	defer c.folderMu.RUnlock()
+	return c.inboxFolderID
+}
+
 // Init locates the root scans folder and the inbox subfolder.
+// Resolved folder IDs are cached for FolderCacheTTL (default 6h) so repeated
+// daemon poll cycles do not re-query Drive on every interval.
 func (c *Client) Init(ctx context.Context) error {
+	c.folderMu.RLock()
+	cached := c.scansFolderID != "" && c.inboxFolderID != "" &&
+		(c.FolderCacheTTL <= 0 || time.Since(c.foldersResolvedAt) < c.FolderCacheTTL)
+	c.folderMu.RUnlock()
+	if cached {
+		return nil
+	}
+
 	qScans := fmt.Sprintf("name = '%s' and mimeType = 'application/vnd.google-apps.folder' and trashed = false",
 		EscapeQuery(c.scansFolderName))
 	scans, err := c.listFiles(ctx, qScans, "files(id, name)", 10)
@@ -289,11 +325,11 @@ func (c *Client) Init(ctx context.Context) error {
 	if len(scans) == 0 {
 		return fmt.Errorf("root folder %q not found in Google Drive", c.scansFolderName)
 	}
-	c.scansFolderID = scans[0].ID
-	c.Logger.Info("located scans root folder", "name", c.scansFolderName, "id", c.scansFolderID)
+	scansID := scans[0].ID
+	c.Logger.Info("located scans root folder", "name", c.scansFolderName, "id", scansID)
 
 	qInbox := fmt.Sprintf("'%s' in parents and name = '%s' and mimeType = 'application/vnd.google-apps.folder' and trashed = false",
-		EscapeQuery(c.scansFolderID), EscapeQuery(c.inboxFolderName))
+		EscapeQuery(scansID), EscapeQuery(c.inboxFolderName))
 	inboxes, err := c.listFiles(ctx, qInbox, "files(id, name)", 10)
 	if err != nil {
 		return fmt.Errorf("locate inbox folder %q: %w", c.inboxFolderName, err)
@@ -310,17 +346,27 @@ func (c *Client) Init(ctx context.Context) error {
 	if len(inboxes) == 0 {
 		return fmt.Errorf("inbox folder %q not found in Google Drive", c.inboxFolderName)
 	}
-	c.inboxFolderID = inboxes[0].ID
-	c.Logger.Info("located inbox folder", "name", c.inboxFolderName, "id", c.inboxFolderID)
+	inboxID := inboxes[0].ID
+	c.Logger.Info("located inbox folder", "name", c.inboxFolderName, "id", inboxID)
+
+	c.folderMu.Lock()
+	c.scansFolderID = scansID
+	c.inboxFolderID = inboxID
+	c.foldersResolvedAt = time.Now()
+	c.folderMu.Unlock()
 	return nil
 }
 
 // ListInbox lists up to batchSize non-folder files in the inbox.
 func (c *Client) ListInbox(ctx context.Context, batchSize int) ([]storage.InboxFile, error) {
+	inboxID := c.getInboxFolderID()
 	q := fmt.Sprintf("'%s' in parents and mimeType != 'application/vnd.google-apps.folder' and trashed = false",
-		EscapeQuery(c.inboxFolderID))
+		EscapeQuery(inboxID))
 	raw, err := c.listFiles(ctx, q, "files(id, name, mimeType, size, createdTime)", batchSize)
 	if err != nil {
+		if strings.Contains(err.Error(), "returned HTTP 404") {
+			c.InvalidateFolderCache()
+		}
 		return nil, err
 	}
 
@@ -360,8 +406,9 @@ func (c *Client) StillInInbox(ctx context.Context, fileID string) (bool, error) 
 	if err := c.doJSON(ctx, http.MethodGet, "/files/"+url.PathEscape(fileID), params, nil, &f); err != nil {
 		return false, err
 	}
+	inboxID := c.getInboxFolderID()
 	for _, p := range f.Parents {
-		if p == c.inboxFolderID {
+		if p == inboxID {
 			return true, nil
 		}
 	}
@@ -405,7 +452,7 @@ func (c *Client) Download(ctx context.Context, fileID string) ([]byte, error) {
 // EnsureFolderPath traverses or creates nested folders under scansFolderID using normalized matching.
 func (c *Client) EnsureFolderPath(ctx context.Context, folderPath string) (string, error) {
 	rawParts := strings.Split(strings.Trim(folderPath, "/"), "/")
-	currentParent := c.scansFolderID
+	currentParent := c.getScansFolderID()
 
 	for _, rawPart := range rawParts {
 		part := strings.TrimSpace(rawPart)
@@ -491,8 +538,9 @@ func (c *Client) FileDocument(ctx context.Context, fileID, destFolderID string, 
 	params := url.Values{}
 	params.Set("fields", "id, name, parents")
 	params.Set("supportsAllDrives", "true")
-	params.Set("removeParents", c.inboxFolderID)
-	if destFolderID != "" && destFolderID != c.inboxFolderID {
+	inboxID := c.getInboxFolderID()
+	params.Set("removeParents", inboxID)
+	if destFolderID != "" && destFolderID != inboxID {
 		params.Set("addParents", destFolderID)
 	}
 
@@ -536,8 +584,9 @@ func (c *Client) FileEncryptedDocument(ctx context.Context, origFileID, destFold
 	uploadParams.Set("uploadType", "multipart")
 	uploadParams.Set("supportsAllDrives", "true")
 	uploadParams.Set("fields", "id, name, parents")
-	uploadParams.Set("removeParents", c.inboxFolderID)
-	if destFolderID != "" && destFolderID != c.inboxFolderID {
+	inboxID := c.getInboxFolderID()
+	uploadParams.Set("removeParents", inboxID)
+	if destFolderID != "" && destFolderID != inboxID {
 		uploadParams.Set("addParents", destFolderID)
 	}
 
@@ -596,7 +645,8 @@ func (c *Client) purgePriorRevisions(ctx context.Context, fileID string) error {
 // ListFiledDocuments walks the Scans folder hierarchy on Google Drive (skipping Inbox* and Unsorted)
 // and returns all already-filed documents with their relative folder paths and metadata.
 func (c *Client) ListFiledDocuments(ctx context.Context) ([]taxonomy.FiledDocument, error) {
-	if c.scansFolderID == "" {
+	scansID := c.getScansFolderID()
+	if scansID == "" {
 		return nil, fmt.Errorf("gdrive client not initialized; call Init first")
 	}
 
@@ -604,7 +654,7 @@ func (c *Client) ListFiledDocuments(ctx context.Context) ([]taxonomy.FiledDocume
 		id      string
 		relPath string
 	}
-	queue := []queueItem{{id: c.scansFolderID, relPath: ""}}
+	queue := []queueItem{{id: scansID, relPath: ""}}
 	var out []taxonomy.FiledDocument
 
 	for len(queue) > 0 {
@@ -757,7 +807,8 @@ func (c *Client) UpdateFiledContent(ctx context.Context, fileID, newName, mimeTy
 // PruneEmptyFolders walks the Scans folder tree bottom-up (skipping Inbox* and Unsorted)
 // and trashes/deletes empty folders left behind after reorganization.
 func (c *Client) PruneEmptyFolders(ctx context.Context) (int, error) {
-	if c.scansFolderID == "" {
+	scansID := c.getScansFolderID()
+	if scansID == "" {
 		return 0, fmt.Errorf("gdrive client not initialized")
 	}
 
@@ -766,7 +817,7 @@ func (c *Client) PruneEmptyFolders(ctx context.Context) (int, error) {
 		relPath string
 		depth   int
 	}
-	queue := []folderNode{{id: c.scansFolderID, relPath: "", depth: 0}}
+	queue := []folderNode{{id: scansID, relPath: "", depth: 0}}
 	var folders []folderNode
 
 	for len(queue) > 0 {
