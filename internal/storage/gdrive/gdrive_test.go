@@ -10,7 +10,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/scubadam/scans-ai-filer/internal/storage"
 )
@@ -177,5 +179,106 @@ func TestGDriveWorkflow(t *testing.T) {
 	}
 	if deletedOrigID != "rev-1" {
 		t.Errorf("expected plaintext revision 'rev-1' to be purged, got %q", deletedOrigID)
+	}
+}
+
+func TestGDriveInitCachingAndInvalidation(t *testing.T) {
+	var tokenCalls atomic.Int32
+	var scansLookupCalls atomic.Int32
+	var inboxLookupCalls atomic.Int32
+	var listInboxCalls atomic.Int32
+	var failInboxWith404 atomic.Bool
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/token":
+			tokenCalls.Add(1)
+			_, _ = w.Write([]byte(`{"access_token":"cached-tok","expires_in":3600}`))
+			return
+		case r.URL.Path == "/drive/v3/files" && r.Method == http.MethodGet:
+			q := r.URL.Query().Get("q")
+			switch {
+			case strings.Contains(q, "name = 'Scans'"):
+				scansLookupCalls.Add(1)
+				_, _ = w.Write([]byte(`{"files":[{"id":"scans-id","name":"Scans"}]}`))
+			case strings.Contains(q, "'scans-id' in parents") && strings.Contains(q, "name = 'Inbox'"):
+				inboxLookupCalls.Add(1)
+				_, _ = w.Write([]byte(`{"files":[{"id":"inbox-id","name":"Inbox"}]}`))
+			case strings.Contains(q, "'inbox-id' in parents"):
+				listInboxCalls.Add(1)
+				if failInboxWith404.Load() {
+					w.WriteHeader(http.StatusNotFound)
+					_, _ = w.Write([]byte(`{"error":{"code":404,"message":"File not found: inbox-id"}}`))
+					return
+				}
+				_, _ = w.Write([]byte(`{"files":[]}`))
+			default:
+				_, _ = w.Write([]byte(`{"files":[]}`))
+			}
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	saJSON := generateTestSAJSON(t, srv.URL+"/token")
+	client, err := NewFromJSON(saJSON, "Scans", "Inbox", nil)
+	if err != nil {
+		t.Fatalf("NewFromJSON failed: %v", err)
+	}
+	client.BaseURL = srv.URL + "/drive/v3"
+
+	ctx := context.Background()
+	for i := 0; i < 3; i++ {
+		if err := client.Init(ctx); err != nil {
+			t.Fatalf("Init #%d failed: %v", i+1, err)
+		}
+		if _, err := client.ListInbox(ctx, 10); err != nil {
+			t.Fatalf("ListInbox #%d failed: %v", i+1, err)
+		}
+	}
+
+	if got := tokenCalls.Load(); got != 1 {
+		t.Errorf("expected 1 OAuth token call across 3 cycles, got %d", got)
+	}
+	if got := scansLookupCalls.Load(); got != 1 {
+		t.Errorf("expected 1 Scans folder lookup across 3 cycles, got %d", got)
+	}
+	if got := inboxLookupCalls.Load(); got != 1 {
+		t.Errorf("expected 1 Inbox folder lookup across 3 cycles, got %d", got)
+	}
+	if got := listInboxCalls.Load(); got != 3 {
+		t.Errorf("expected 3 ListInbox calls, got %d", got)
+	}
+
+	// Simulate inbox folder disappearing (HTTP 404) -> cache should invalidate and re-resolve on next Init.
+	failInboxWith404.Store(true)
+	if _, err := client.ListInbox(ctx, 10); err == nil {
+		t.Fatalf("expected HTTP 404 error from ListInbox")
+	}
+	failInboxWith404.Store(false)
+
+	if err := client.Init(ctx); err != nil {
+		t.Fatalf("Init after 404 invalidation failed: %v", err)
+	}
+	if got := scansLookupCalls.Load(); got != 2 {
+		t.Errorf("expected Scans lookup count 2 after 404 invalidation, got %d", got)
+	}
+	if got := inboxLookupCalls.Load(); got != 2 {
+		t.Errorf("expected Inbox lookup count 2 after 404 invalidation, got %d", got)
+	}
+
+	// Verify TTL expiration triggers a refresh on the next Init.
+	client.FolderCacheTTL = time.Millisecond
+	time.Sleep(5 * time.Millisecond)
+	if err := client.Init(ctx); err != nil {
+		t.Fatalf("Init after TTL expiry failed: %v", err)
+	}
+	if got := scansLookupCalls.Load(); got != 3 {
+		t.Errorf("expected Scans lookup count 3 after TTL expiry, got %d", got)
+	}
+	if got := inboxLookupCalls.Load(); got != 3 {
+		t.Errorf("expected Inbox lookup count 3 after TTL expiry, got %d", got)
 	}
 }
