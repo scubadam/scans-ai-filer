@@ -152,9 +152,53 @@ containers:
         value: {{ .Values.config.pauseSeconds | quote }}
       - name: DRY_RUN
         value: {{ .Values.config.dryRun | quote }}
+      - name: NOTIFY_ON_SUCCESS
+        value: {{ .Values.config.notifyOnSuccess | quote }}
+      - name: NOTIFY_ON_ERROR
+        value: {{ .Values.config.notifyOnError | quote }}
       {{- if .Values.config.webhookUrl }}
       - name: WEBHOOK_URL
         value: {{ .Values.config.webhookUrl | quote }}
+      {{- end }}
+      {{- if ne (toString .Values.config.webhookOnSuccess) "" }}
+      - name: WEBHOOK_ON_SUCCESS
+        value: {{ .Values.config.webhookOnSuccess | quote }}
+      {{- end }}
+      {{- if ne (toString .Values.config.webhookOnError) "" }}
+      - name: WEBHOOK_ON_ERROR
+        value: {{ .Values.config.webhookOnError | quote }}
+      {{- end }}
+      {{- if .Values.config.ntfyUrl }}
+      - name: NTFY_URL
+        value: {{ .Values.config.ntfyUrl | quote }}
+      {{- end }}
+      {{- if .Values.config.ntfyTopic }}
+      - name: NTFY_TOPIC
+        value: {{ .Values.config.ntfyTopic | quote }}
+      {{- end }}
+      {{- if .Values.config.ntfyErrorTopic }}
+      - name: NTFY_ERROR_TOPIC
+        value: {{ .Values.config.ntfyErrorTopic | quote }}
+      {{- end }}
+      {{- if .Values.config.ntfyPriority }}
+      - name: NTFY_PRIORITY
+        value: {{ .Values.config.ntfyPriority | quote }}
+      {{- end }}
+      {{- if .Values.config.ntfyErrorPriority }}
+      - name: NTFY_ERROR_PRIORITY
+        value: {{ .Values.config.ntfyErrorPriority | quote }}
+      {{- end }}
+      {{- if .Values.config.ntfyClickUrl }}
+      - name: NTFY_CLICK_URL
+        value: {{ .Values.config.ntfyClickUrl | quote }}
+      {{- end }}
+      {{- if ne (toString .Values.config.ntfyOnSuccess) "" }}
+      - name: NTFY_ON_SUCCESS
+        value: {{ .Values.config.ntfyOnSuccess | quote }}
+      {{- end }}
+      {{- if ne (toString .Values.config.ntfyOnError) "" }}
+      - name: NTFY_ON_ERROR
+        value: {{ .Values.config.ntfyOnError | quote }}
       {{- end }}
       {{- if .Values.webUI.enabled }}
       - name: WEB_UI_ENABLED
@@ -180,6 +224,14 @@ containers:
           secretKeyRef:
             name: {{ include "scans-ai-filer.secretName" . }}
             key: {{ .Values.secrets.pdfPasswordKey }}
+            optional: true
+      {{- end }}
+      {{- if .Values.secrets.ntfyTokenKey }}
+      - name: NTFY_TOKEN
+        valueFrom:
+          secretKeyRef:
+            name: {{ include "scans-ai-filer.secretName" . }}
+            key: {{ .Values.secrets.ntfyTokenKey }}
             optional: true
       {{- end }}
     resources:

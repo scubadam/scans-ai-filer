@@ -25,3 +25,12 @@ Thank you for your interest in contributing!
 2. **Add config & validation** in `internal/config/config.go` (`Config`, `Load`, and `Validate`).
 3. **Wire the constructor** into `buildAI()` in `cmd/filer/main.go`.
 4. **Add unit tests** using `net/http/httptest` (see `internal/ai/gemini_test.go` and `internal/ai/ollama_test.go`).
+
+## Adding a New Notification Provider
+
+`scans-ai-filer` uses a `MultiNotifier` fan-out architecture (`internal/notify/notify.go`) with per-channel `EventFilter` (`OnSuccess` / `OnError`). It ships with `webhook` (`internal/notify/webhook.go`) and `ntfy` (`internal/notify/ntfy.go`), plus a compile-checked reference stub at **`internal/notify/smtp.go`** for Email/Pushover/Discord/Telegram.
+
+1. **Implement `notify.NamedNotifier`** starting from `internal/notify/smtp.go` and reuse `FormatSummary(items, failedCount)` to preserve strict PII sanitization.
+2. **Add config & per-channel event overrides** (`*_ON_SUCCESS`, `*_ON_ERROR`) in `internal/config/config.go`.
+3. **Register the provider** inside `buildNotifier()` in `cmd/filer/main.go` (wrapped in `notify.NewFilteredNotifier`).
+4. **Add unit tests** using `net/http/httptest` (see `internal/notify/ntfy_test.go` and `internal/notify/multi_test.go`).

@@ -12,16 +12,8 @@ import (
 	"time"
 )
 
-// FiledItem holds strictly sanitized filing info for notifications (no sensitive PII/details).
-type FiledItem struct {
-	Filename string
-	Folder   string
-}
-
-// Notifier dispatches batch completion notifications.
-type Notifier interface {
-	Send(ctx context.Context, items []FiledItem, failedCount int) error
-}
+// Compile-time interface assertion.
+var _ NamedNotifier = (*WebhookNotifier)(nil)
 
 // WebhookNotifier sends JSON summaries to an HTTP webhook (e.g. Home Assistant webhook).
 type WebhookNotifier struct {
@@ -42,6 +34,8 @@ func NewWebhookNotifier(url string, logger *slog.Logger) *WebhookNotifier {
 	}
 }
 
+func (w *WebhookNotifier) Name() string { return "webhook" }
+
 type webhookPayload struct {
 	Title   string `json:"title"`
 	Message string `json:"message"`
@@ -59,36 +53,7 @@ func (w *WebhookNotifier) Send(ctx context.Context, items []FiledItem, failedCou
 		return nil
 	}
 
-	var title string
-	switch {
-	case succeeded > 0 && failedCount == 0:
-		unit := "documents"
-		if succeeded == 1 {
-			unit = "document"
-		}
-		title = fmt.Sprintf("Scans: %d %s filed", succeeded, unit)
-	case succeeded > 0 && failedCount > 0:
-		title = fmt.Sprintf("Scans: %d filed, %d failed", succeeded, failedCount)
-	default:
-		title = fmt.Sprintf("Scans: Filing batch failed (%d errors)", failedCount)
-	}
-
-	var lines []string
-	limit := min(succeeded, 10)
-	for i := 0; i < limit; i++ {
-		lines = append(lines, fmt.Sprintf("• %s\n  %s", items[i].Filename, items[i].Folder))
-	}
-	if succeeded > 10 {
-		lines = append(lines, fmt.Sprintf("... and %d more.", succeeded-10))
-	}
-	if failedCount > 0 {
-		lines = append(lines, fmt.Sprintf("%d document(s) encountered errors.", failedCount))
-	}
-
-	msg := strings.Join(lines, "\n")
-	if msg == "" {
-		msg = fmt.Sprintf("%d document(s) failed to process.", failedCount)
-	}
+	title, msg, _ := FormatSummary(items, failedCount)
 
 	body, err := json.Marshal(webhookPayload{
 		Title:   title,

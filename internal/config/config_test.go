@@ -36,3 +36,34 @@ func TestLoadLocalStorage(t *testing.T) {
 		t.Errorf("unexpected local storage config: provider=%q root=%q", cfg.StorageProvider, cfg.LocalRootPath)
 	}
 }
+
+func TestLoadNotifyConfig(t *testing.T) {
+	t.Setenv("STORAGE_PROVIDER", "local")
+	t.Setenv("LOCAL_ROOT_PATH", "/tmp/scans")
+	t.Setenv("AI_PROVIDER", "ollama")
+	t.Setenv("OLLAMA_BASE_URL", "http://localhost:11434/v1")
+	t.Setenv("NOTIFY_ON_SUCCESS", "false")
+	t.Setenv("NOTIFY_ON_ERROR", "true")
+	t.Setenv("NTFY_URL", "http://ntfy.ntfy.svc.cluster.local")
+	t.Setenv("NTFY_TOPIC", "scans-filer")
+	t.Setenv("NTFY_ERROR_TOPIC", "scans-errors")
+	t.Setenv("NTFY_ON_SUCCESS", "true")
+	t.Setenv("WEBHOOK_URL", "http://ha.local/webhook")
+
+	cfg, err := Load(false)
+	if err != nil {
+		t.Fatalf("Load(notify) failed: %v", err)
+	}
+	if cfg.NotifyOnSuccess || !cfg.NotifyOnError {
+		t.Errorf("unexpected global notify flags: success=%v error=%v", cfg.NotifyOnSuccess, cfg.NotifyOnError)
+	}
+	if !cfg.NtfyOnSuccess || !cfg.NtfyOnError {
+		t.Errorf("expected NTFY_ON_SUCCESS override=true, error=true; got %v/%v", cfg.NtfyOnSuccess, cfg.NtfyOnError)
+	}
+	if cfg.WebhookOnSuccess || !cfg.WebhookOnError {
+		t.Errorf("expected webhook to inherit global false/true; got %v/%v", cfg.WebhookOnSuccess, cfg.WebhookOnError)
+	}
+	if cfg.NtfyTopic != "scans-filer" || cfg.NtfyErrorTopic != "scans-errors" {
+		t.Errorf("unexpected ntfy topics: %q / %q", cfg.NtfyTopic, cfg.NtfyErrorTopic)
+	}
+}

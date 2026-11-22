@@ -64,8 +64,23 @@ type Config struct {
 	PDFPassword      string
 	PDFOwnerPassword string
 
-	// Optional sanitized webhook notification (compatible with Home Assistant webhooks)
-	WebhookURL string
+	// Notification configuration (multi-target fan-out with per-channel success/error filtering)
+	NotifyOnSuccess   bool
+	NotifyOnError     bool
+	WebhookURL        string
+	WebhookOnSuccess  bool
+	WebhookOnError    bool
+	NtfyURL           string
+	NtfyTopic         string
+	NtfyErrorTopic    string
+	NtfyToken         string
+	NtfyUsername      string
+	NtfyPassword      string
+	NtfyPriority      string
+	NtfyErrorPriority string
+	NtfyClickURL      string
+	NtfyOnSuccess     bool
+	NtfyOnError       bool
 
 	// Optional embedded Taxonomy Browser/Editor PWA (used in Deployment daemon mode)
 	WebUIEnabled bool
@@ -199,6 +214,13 @@ func Load(dryRunFlag bool) (*Config, error) {
 		dryRun = v == "1" || v == "true" || v == "yes"
 	}
 
+	notifyOnSuccess := envBoolOrDefault("NOTIFY_ON_SUCCESS", true)
+	notifyOnError := envBoolOrDefault("NOTIFY_ON_ERROR", true)
+	webhookOnSuccess := envBoolOrDefault("WEBHOOK_ON_SUCCESS", notifyOnSuccess)
+	webhookOnError := envBoolOrDefault("WEBHOOK_ON_ERROR", notifyOnError)
+	ntfyOnSuccess := envBoolOrDefault("NTFY_ON_SUCCESS", notifyOnSuccess)
+	ntfyOnError := envBoolOrDefault("NTFY_ON_ERROR", notifyOnError)
+
 	webhookURL := strings.TrimSpace(os.Getenv("WEBHOOK_URL"))
 	if webhookURL == "" {
 		webhookURL = strings.TrimSpace(os.Getenv("HA_WEBHOOK_URL"))
@@ -262,7 +284,22 @@ func Load(dryRunFlag bool) (*Config, error) {
 		DryRun:                dryRun,
 		PDFPassword:           strings.TrimSpace(os.Getenv("PDF_PASSWORD")),
 		PDFOwnerPassword:      strings.TrimSpace(os.Getenv("PDF_OWNER_PASSWORD")),
+		NotifyOnSuccess:       notifyOnSuccess,
+		NotifyOnError:         notifyOnError,
 		WebhookURL:            webhookURL,
+		WebhookOnSuccess:      webhookOnSuccess,
+		WebhookOnError:        webhookOnError,
+		NtfyURL:               strings.TrimSpace(os.Getenv("NTFY_URL")),
+		NtfyTopic:             strings.TrimSpace(os.Getenv("NTFY_TOPIC")),
+		NtfyErrorTopic:        strings.TrimSpace(os.Getenv("NTFY_ERROR_TOPIC")),
+		NtfyToken:             strings.TrimSpace(os.Getenv("NTFY_TOKEN")),
+		NtfyUsername:          strings.TrimSpace(os.Getenv("NTFY_USERNAME")),
+		NtfyPassword:          strings.TrimSpace(os.Getenv("NTFY_PASSWORD")),
+		NtfyPriority:          envOrDefault("NTFY_PRIORITY", "default"),
+		NtfyErrorPriority:     envOrDefault("NTFY_ERROR_PRIORITY", "high"),
+		NtfyClickURL:          strings.TrimSpace(os.Getenv("NTFY_CLICK_URL")),
+		NtfyOnSuccess:         ntfyOnSuccess,
+		NtfyOnError:           ntfyOnError,
 		WebUIEnabled:          webUIEnabled,
 		WebUIAddr:             envOrDefault("WEB_UI_ADDR", ":8080"),
 	}
@@ -306,6 +343,9 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("unsupported AI provider %q in route %q (supported: gemini, ollama, openai)", r.AIProvider, r.InboxFolder)
 		}
 	}
+	if c.NtfyURL != "" && c.NtfyTopic == "" && c.NtfyErrorTopic == "" {
+		return fmt.Errorf("ntfy notifications require NTFY_TOPIC (or NTFY_ERROR_TOPIC) when NTFY_URL is set")
+	}
 	return nil
 }
 
@@ -314,4 +354,16 @@ func envOrDefault(key, def string) string {
 		return v
 	}
 	return def
+}
+
+func envBoolOrDefault(key string, def bool) bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
+	switch v {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return def
+	}
 }
