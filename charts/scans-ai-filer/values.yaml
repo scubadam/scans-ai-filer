@@ -52,7 +52,22 @@ config:
   batchSize: 15
   pauseSeconds: 1
   dryRun: false
+  # Global notification event defaults (overridable per channel)
+  notifyOnSuccess: true
+  notifyOnError: true
+  # Optional Home Assistant / generic JSON webhook
   webhookUrl: ""
+  webhookOnSuccess: "" # "true" | "false" (defaults to notifyOnSuccess)
+  webhookOnError: ""   # "true" | "false" (defaults to notifyOnError)
+  # Optional self-hosted or public ntfy push notifications
+  ntfyUrl: ""          # e.g. "http://ntfy.ntfy.svc.cluster.local"
+  ntfyTopic: ""        # e.g. "scans-filer"
+  ntfyErrorTopic: ""   # Optional separate topic for error batches
+  ntfyPriority: "default"
+  ntfyErrorPriority: "high"
+  ntfyClickUrl: ""     # Optional click URL (e.g. "https://scans.homelab")
+  ntfyOnSuccess: ""    # "true" | "false" (defaults to notifyOnSuccess)
+  ntfyOnError: ""      # "true" | "false" (defaults to notifyOnError)
 
 secrets:
   # Recommended: manage credentials via SOPS/ExternalSecrets and reference existingSecret
@@ -61,6 +76,8 @@ secrets:
   gdriveSaJsonKey: "gdrive-sa.json"
   # Optional: key in existingSecret holding the AES-256 PDF encryption passphrase
   pdfPasswordKey: "PDF_PASSWORD"
+  # Optional: key in existingSecret holding an ntfy Bearer access token
+  ntfyTokenKey: ""
   # Inline values (only used when existingSecret is empty)
   geminiApiKey: ""
   gdriveSaJson: ""
