@@ -107,6 +107,44 @@ func buildAI(cfg *config.Config, providerName string, taxStore taxonomy.Store, o
 	}
 }
 
+func buildNotifier(cfg *config.Config, logger *slog.Logger) notify.Notifier {
+	var channels []notify.Notifier
+	var names []string
+
+	if cfg.WebhookURL != "" {
+		w := notify.NewWebhookNotifier(cfg.WebhookURL, logger)
+		channels = append(channels, notify.NewFilteredNotifier(w, notify.EventFilter{
+			OnSuccess: cfg.WebhookOnSuccess,
+			OnError:   cfg.WebhookOnError,
+		}))
+		names = append(names, fmt.Sprintf("webhook(success=%t,error=%t)", cfg.WebhookOnSuccess, cfg.WebhookOnError))
+	}
+
+	if cfg.NtfyURL != "" {
+		n := notify.NewNtfyNotifier(notify.NtfyConfig{
+			BaseURL:       cfg.NtfyURL,
+			Topic:         cfg.NtfyTopic,
+			ErrorTopic:    cfg.NtfyErrorTopic,
+			Token:         cfg.NtfyToken,
+			Username:      cfg.NtfyUsername,
+			Password:      cfg.NtfyPassword,
+			Priority:      cfg.NtfyPriority,
+			ErrorPriority: cfg.NtfyErrorPriority,
+			ClickURL:      cfg.NtfyClickURL,
+		}, logger)
+		channels = append(channels, notify.NewFilteredNotifier(n, notify.EventFilter{
+			OnSuccess: cfg.NtfyOnSuccess,
+			OnError:   cfg.NtfyOnError,
+		}))
+		names = append(names, fmt.Sprintf("ntfy(topic=%s,success=%t,error=%t)", cfg.NtfyTopic, cfg.NtfyOnSuccess, cfg.NtfyOnError))
+	}
+
+	if len(names) > 0 {
+		logger.Info("enabled notification channels", "channels", strings.Join(names, ", "))
+	}
+	return notify.NewMultiNotifier(logger, channels...)
+}
+
 func main() {
 	dryRunFlag := flag.Bool("dry-run", false, "Analyze documents or preview maintenance actions without modifying storage or DB")
 	bootstrapFlag := flag.Bool("bootstrap-taxonomy", false, "Walk already-filed documents in storage, print diff vs taxonomy.csv, and populate TAXONOMY_DB_PATH")
@@ -308,7 +346,7 @@ func main() {
 		return
 	}
 
-	notifier := notify.NewWebhookNotifier(cfg.WebhookURL, logger)
+	notifier := buildNotifier(cfg, logger)
 	routeStores := make(map[string]storage.Provider, len(cfg.InboxRoutes))
 
 	runCycle := func() error {

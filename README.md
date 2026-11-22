@@ -61,7 +61,20 @@ flowchart LR
 | `DRY_RUN` | `false` | Classify and log without modifying storage or sending webhooks (also `--dry-run`) |
 | `PDF_PASSWORD` | *(empty)* | Optional AES-256 PDF password. When set, PDFs are encrypted (and image scans wrapped into encrypted PDFs), uploaded as new files, and plaintext Inbox originals are permanently deleted so no unencrypted version history remains in Drive. |
 | `PDF_OWNER_PASSWORD` | *(defaults to `PDF_PASSWORD`)* | Optional PDF owner password when `PDF_PASSWORD` is enabled |
+| `NOTIFY_ON_SUCCESS` | `true` | Global default: send notifications when documents are successfully filed |
+| `NOTIFY_ON_ERROR` | `true` | Global default: send notifications when any document in a batch fails |
 | `WEBHOOK_URL` | *(empty)* | Optional JSON webhook URL (compatible with Home Assistant webhooks; `HA_WEBHOOK_URL` also supported) |
+| `WEBHOOK_ON_SUCCESS` | *(inherits `NOTIFY_ON_SUCCESS`)* | Override success notifications for the webhook channel |
+| `WEBHOOK_ON_ERROR` | *(inherits `NOTIFY_ON_ERROR`)* | Override error notifications for the webhook channel |
+| `NTFY_URL` | *(empty)* | Optional self-hosted or public `ntfy` server base URL (e.g. `http://ntfy.ntfy.svc.cluster.local` or `https://ntfy.sh`) |
+| `NTFY_TOPIC` | *(empty)* | `ntfy` topic for filing notifications (required when `NTFY_URL` is set unless `NTFY_ERROR_TOPIC` is set) |
+| `NTFY_ERROR_TOPIC` | *(defaults to `NTFY_TOPIC`)* | Optional separate `ntfy` topic for batches with errors |
+| `NTFY_TOKEN` | *(optional)* | Bearer access token (`tk_...`) for authenticated `ntfy` servers |
+| `NTFY_USERNAME` / `NTFY_PASSWORD` | *(optional)* | Basic auth credentials for `ntfy` (used when `NTFY_TOKEN` is unset) |
+| `NTFY_PRIORITY` | `default` | `ntfy` priority for successful filings (`min`, `low`, `default`, `high`, `urgent`) |
+| `NTFY_ERROR_PRIORITY` | `high` | `ntfy` priority for error notifications |
+| `NTFY_CLICK_URL` | *(optional)* | URL opened when tapping an `ntfy` notification (e.g. your Taxonomy PWA URL) |
+| `NTFY_ON_SUCCESS` / `NTFY_ON_ERROR` | *(inherits global)* | Per-channel overrides to route success vs error alerts independently |
 
 ---
 
