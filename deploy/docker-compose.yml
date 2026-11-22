@@ -1,24 +1,88 @@
 services:
-  scans-ai-filer:
-    image: ghcr.io/scubadam/scans-ai-filer:0.1.0
+  ocr-sidecar:
+    image: ghcr.io/scubadam/scans-ai-filer-ocr:latest
+    restart: unless-stopped
     environment:
-      STORAGE_PROVIDER: gdrive
-      AI_PROVIDER: gemini
-      GEMINI_API_KEY: "${GEMINI_API_KEY}"
-      GEMINI_MODEL: gemini-2.5-flash
-      GOOGLE_APPLICATION_CREDENTIALS: /etc/gdrive/gdrive-sa.json
-      TAXONOMY_CSV_PATH: /etc/scans-ai-filer/taxonomy.csv
-      SCANS_FOLDER_NAME: Scans
-      INBOX_FOLDER_NAME: Inbox
-      BATCH_SIZE: "15"
-      DRY_RUN: "false"
-      # Optional: sanitized webhook notification (compatible with Home Assistant)
-      WEBHOOK_URL: "${WEBHOOK_URL:-}"
-    volumes:
-      - ./gdrive-sa.json:/etc/gdrive/gdrive-sa.json:ro
-      - ./taxonomy.csv:/etc/scans-ai-filer/taxonomy.csv:ro
+      OCR_ADDR: ":8085"
+      OCR_LANG: "${OCR_LANG:-eng}"
     read_only: true
+    tmpfs:
+      - /tmp
     security_opt:
       - no-new-privileges:true
     cap_drop:
       - ALL
+
+  scans-ai-filer:
+    image: ghcr.io/scubadam/scans-ai-filer:latest
+    restart: unless-stopped
+    depends_on:
+      - ocr-sidecar
+    ports:
+      # Embedded Taxonomy Browser/Editor PWA (http://localhost:8080)
+      - "${WEB_UI_PORT:-8080}:8080"
+    environment:
+      # --- Storage ---
+      # Local filesystem / mounted NAS (SMB/NFS) / Syncthing folder:
+      STORAGE_PROVIDER: "${STORAGE_PROVIDER:-local}"
+      LOCAL_ROOT_PATH: /data/scans
+      SCANS_FOLDER_NAME: "${SCANS_FOLDER_NAME:-Scans}"
+      INBOX_FOLDER_NAME: "${INBOX_FOLDER_NAME:-Inbox}"
+      # For Google Drive instead, set STORAGE_PROVIDER=gdrive and mount gdrive-sa.json below:
+      # GOOGLE_APPLICATION_CREDENTIALS: /etc/gdrive/gdrive-sa.json
+
+      # --- AI & Dual Privacy Routing ---
+      AI_PROVIDER: "${AI_PROVIDER:-gemini}"
+      GEMINI_API_KEY: "${GEMINI_API_KEY:-}"
+      GEMINI_MODEL: "${GEMINI_MODEL:-gemini-2.5-flash}"
+      # Optional dual-route setup (cloud Gemini for everyday scans, local Ollama VLM for sensitive docs):
+      # INBOX_ROUTES: "Inbox:gemini,Inbox-Local:ollama"
+      # OLLAMA_BASE_URL: "http://host.docker.internal:11434/v1"
+      # OLLAMA_MODEL: "qwen2.5vl:3b"
+
+      # --- Deterministic OCR & Searchable PDFs ---
+      OCR_PROVIDER: auto
+      OCR_ENDPOINT_URL: http://ocr-sidecar:8085/ocr
+      OCR_HYBRID_REMOTE: "${OCR_HYBRID_REMOTE:-true}"
+      OCR_EMBED_PDF: "${OCR_EMBED_PDF:-true}"
+
+      # --- Daemon, Taxonomy Vector Store & Web UI ---
+      POLL_INTERVAL_SECONDS: "${POLL_INTERVAL_SECONDS:-60}"
+      TAXONOMY_CSV_PATH: /etc/scans-ai-filer/taxonomy.csv
+      TAXONOMY_DB_PATH: /var/lib/scans-ai-filer/taxonomy.db
+      EMBEDDING_PROVIDER: "${EMBEDDING_PROVIDER:-auto}"
+      WEB_UI_ENABLED: "true"
+      WEB_UI_ADDR: ":8080"
+      BATCH_SIZE: "${BATCH_SIZE:-15}"
+      DRY_RUN: "${DRY_RUN:-false}"
+      LOG_LEVEL: "${LOG_LEVEL:-info}"
+
+      # --- Optional AES-256 PDF Encryption ---
+      PDF_PASSWORD: "${PDF_PASSWORD:-}"
+
+      # --- Optional Notifications (ntfy and/or Home Assistant webhook) ---
+      NTFY_URL: "${NTFY_URL:-}"
+      NTFY_TOPIC: "${NTFY_TOPIC:-}"
+      NTFY_TOKEN: "${NTFY_TOKEN:-}"
+      NTFY_PRIORITY: "${NTFY_PRIORITY:-default}"
+      NTFY_ERROR_PRIORITY: "${NTFY_ERROR_PRIORITY:-high}"
+      WEBHOOK_URL: "${WEBHOOK_URL:-}"
+    volumes:
+      # Local scans root (must contain an Inbox/ subfolder when STORAGE_PROVIDER=local)
+      - "${LOCAL_SCANS_DIR:-./scans}:/data/scans"
+      # Seed taxonomy CSV (copy examples/taxonomy.csv here)
+      - "${TAXONOMY_CSV_FILE:-../examples/taxonomy.csv}:/etc/scans-ai-filer/taxonomy.csv:ro"
+      # Persistent SQLite vector taxonomy store
+      - scans-filer-data:/var/lib/scans-ai-filer
+      # Uncomment when using STORAGE_PROVIDER=gdrive:
+      # - ./gdrive-sa.json:/etc/gdrive/gdrive-sa.json:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+volumes:
+  scans-filer-data:

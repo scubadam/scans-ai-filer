@@ -155,7 +155,16 @@ func main() {
 	limitFlag := flag.Int("limit", 0, "Optional maximum number of files to process in --reorg-storage or --backfill-pdfs (0 = unlimited)")
 	flag.Parse()
 
-	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	logLevel := slog.LevelInfo
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("LOG_LEVEL"))) {
+	case "debug":
+		logLevel = slog.LevelDebug
+	case "warn", "warning":
+		logLevel = slog.LevelWarn
+	case "error":
+		logLevel = slog.LevelError
+	}
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel}))
 	slog.SetDefault(logger)
 
 	cfg, err := config.Load(*dryRunFlag)
@@ -362,7 +371,7 @@ func main() {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			logger.Info("running inbox route", "inbox", route.InboxFolder, "ai_provider", route.AIProvider)
+			logger.Debug("running inbox route", "inbox", route.InboxFolder, "ai_provider", route.AIProvider)
 
 			store, ok := routeStores[route.InboxFolder]
 			if !ok {
