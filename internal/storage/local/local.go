@@ -232,6 +232,19 @@ func (c *Client) Download(_ context.Context, fileID string) ([]byte, error) {
 	return data, nil
 }
 
+func sanitizeDirSegment(s string) string {
+	const invalidChars = `\/:*?"<>|`
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		if strings.ContainsRune(invalidChars, r) {
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return strings.TrimSpace(b.String())
+}
+
 // EnsureFolderPath traverses or creates nested folders under rootDir using
 // case-insensitive and normalized name matching (matching gdrive behavior).
 func (c *Client) EnsureFolderPath(_ context.Context, folderPath string) (string, error) {
@@ -242,12 +255,8 @@ func (c *Client) EnsureFolderPath(_ context.Context, folderPath string) (string,
 	curRel := ""
 
 	for _, rawPart := range rawParts {
-		part := strings.TrimSpace(rawPart)
+		part := sanitizeDirSegment(rawPart)
 		if part == "" || part == "." || part == ".." {
-			continue
-		}
-		part = taxonomy.SanitizeFilename(part)
-		if part == "" {
 			continue
 		}
 
