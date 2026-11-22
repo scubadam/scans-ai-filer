@@ -20,6 +20,7 @@ activeDeadlineSeconds: 1800
 
 config:
   storageProvider: "gdrive"
+  localRootPath: ""
   aiProvider: "gemini"
   geminiModel: "gemini-2.5-flash"
   # Poll interval in seconds when workloadMode == "deployment" (0 = single-shot)
