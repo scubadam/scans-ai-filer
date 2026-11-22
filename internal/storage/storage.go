@@ -56,6 +56,14 @@ type Provider interface {
 	FileEncryptedDocument(ctx context.Context, origFileID, destFolderID string, encryptedBytes []byte, mimeType string, meta FileMetadata) error
 }
 
+// LinkProvider is an optional capability implemented by storage providers that
+// expose web-accessible URLs for filed documents and folders (e.g. Google Drive,
+// Nextcloud/WebDAV, or a self-hosted file browser).
+type LinkProvider interface {
+	FileURL(fileID string) string
+	FolderURL(folderID string) string
+}
+
 // FiledDocumentLister is an optional capability implemented by storage providers that
 // can walk already-filed documents under the scans root to bootstrap or diff a taxonomy store.
 type FiledDocumentLister interface {

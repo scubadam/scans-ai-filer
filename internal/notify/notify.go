@@ -13,8 +13,10 @@ var ErrNotImplemented = errors.New("notification provider not yet implemented")
 
 // FiledItem holds strictly sanitized filing info for notifications (no sensitive PII/details).
 type FiledItem struct {
-	Filename string
-	Folder   string
+	Filename  string `json:"filename"`
+	Folder    string `json:"folder"`
+	FileURL   string `json:"file_url,omitempty"`
+	FolderURL string `json:"folder_url,omitempty"`
 }
 
 // Notifier dispatches batch completion notifications.
