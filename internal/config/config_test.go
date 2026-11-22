@@ -21,3 +21,18 @@ func TestParseInboxRoutes(t *testing.T) {
 		t.Errorf("expected error for malformed route")
 	}
 }
+
+func TestLoadLocalStorage(t *testing.T) {
+	t.Setenv("STORAGE_PROVIDER", "local")
+	t.Setenv("LOCAL_ROOT_PATH", "/mnt/nas/scans")
+	t.Setenv("AI_PROVIDER", "ollama")
+	t.Setenv("OLLAMA_BASE_URL", "http://localhost:11434/v1")
+
+	cfg, err := Load(false)
+	if err != nil {
+		t.Fatalf("Load(local) failed: %v", err)
+	}
+	if cfg.StorageProvider != "local" || cfg.LocalRootPath != "/mnt/nas/scans" {
+		t.Errorf("unexpected local storage config: provider=%q root=%q", cfg.StorageProvider, cfg.LocalRootPath)
+	}
+}

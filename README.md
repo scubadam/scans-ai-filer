@@ -29,7 +29,10 @@ flowchart LR
 ```
 
 ### Pluggable Interfaces
-- **Storage (`internal/storage`):** Abstracted behind `storage.Provider`. Ships with `gdrive` (pure Go stdlib RS256 Service Account OAuth2 + Drive v3 REST API). Future backends (Local NAS / SMB / S3 / WebDAV / Nextcloud) plug in cleanly.
+- **Storage (`internal/storage`):** Abstracted behind `storage.Provider` (and optional `storage.MaintenanceProvider`). Ships with:
+  - `gdrive` — pure Go stdlib RS256 Service Account OAuth2 + Drive v3 REST API
+  - `local` — local filesystem / mounted NFS / SMB NAS / Syncthing folder (`LOCAL_ROOT_PATH`)
+  - Future backends (S3, WebDAV / Nextcloud) plug in cleanly.
 - **AI (`internal/ai`):** Abstracted behind `ai.Provider`. Ships with `gemini` (`gemini-2.5-flash` default). Future local/cloud providers (Ollama, OpenAI-compatible, Anthropic) plug in cleanly.
 
 ---
@@ -38,7 +41,8 @@ flowchart LR
 
 | Environment Variable | Default | Description |
 | :--- | :--- | :--- |
-| `STORAGE_PROVIDER` | `gdrive` | Storage backend (`gdrive`) |
+| `STORAGE_PROVIDER` | `gdrive` | Storage backend (`gdrive`, `local`) |
+| `LOCAL_ROOT_PATH` | `/data/scans` | Root scans directory when `STORAGE_PROVIDER=local` (must contain your `INBOX_FOLDER_NAME` subfolder, e.g. `/data/scans/Inbox`) |
 | `AI_PROVIDER` | `gemini` | Default AI classification backend (`gemini`, `ollama`, `openai`) when `INBOX_ROUTES` is unset |
 | `INBOX_ROUTES` | *(unset)* | Optional multi-inbox routing, e.g. `Inbox:gemini,Inbox-Local:ollama` — route sensitive scans to a local VLM while keeping everyday scans on paid-tier Gemini |
 | `GEMINI_API_KEY` | *(required if using `gemini`)* | Paid-tier Gemini API key |

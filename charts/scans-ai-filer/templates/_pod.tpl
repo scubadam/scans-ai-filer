@@ -52,6 +52,10 @@ containers:
     env:
       - name: STORAGE_PROVIDER
         value: {{ .Values.config.storageProvider | quote }}
+      {{- if .Values.config.localRootPath }}
+      - name: LOCAL_ROOT_PATH
+        value: {{ .Values.config.localRootPath | quote }}
+      {{- end }}
       - name: AI_PROVIDER
         value: {{ .Values.config.aiProvider | quote }}
       - name: GEMINI_MODEL
