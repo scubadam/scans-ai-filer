@@ -10,7 +10,7 @@ COPY cmd/ocr-server ./cmd/ocr-server
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
     go build -trimpath -ldflags="-s -w" -o /out/ocr-server ./cmd/ocr-server
 
-FROM alpine:3.21
+FROM alpine:3.24
 RUN apk add --no-cache tesseract-ocr tesseract-ocr-data-eng \
     && adduser -D -u 65532 nonroot
 COPY --from=builder /out/ocr-server /usr/local/bin/ocr-server
