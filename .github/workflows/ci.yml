@@ -28,6 +28,9 @@ jobs:
       - name: Run go vet
         run: go vet ./...
 
+      - name: Run govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
       - name: Run Unit Tests with Race Detector
         run: go test -v -race ./internal/...
 
