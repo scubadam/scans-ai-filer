@@ -43,6 +43,15 @@ jobs:
           docker run --rm --entrypoint tesseract scans-ai-filer-ocr:ci-test --version
           docker run --rm --entrypoint tesseract scans-ai-filer-ocr:ci-test --list-langs | grep -qx 'eng'
 
+      - name: Scan OCR Image for Fixable HIGH/CRITICAL CVEs (Trivy)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: 'image'
+          image-ref: 'scans-ai-filer-ocr:ci-test'
+          severity: 'HIGH,CRITICAL'
+          ignore-unfixed: true
+          exit-code: '1'
+
       - name: Smoke-Test OCR HTTP Endpoints (/healthz, /ocr, /ocr/pdf)
         run: |
           docker run -d --name ocr-ci-test -p 127.0.0.1:8085:8085 scans-ai-filer-ocr:ci-test
