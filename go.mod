@@ -5,7 +5,7 @@ go 1.26.0
 require (
 	github.com/pdfcpu/pdfcpu v0.16.4
 	golang.org/x/image v0.48.0
-	modernc.org/sqlite v1.62.0
+	modernc.org/sqlite v1.63.0
 )
 
 require (
