@@ -1,0 +1,98 @@
+name: CI (OCR Sidecar)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'Dockerfile.ocr'
+      - 'cmd/ocr-server/**'
+      - '.github/workflows/ci-ocr.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'Dockerfile.ocr'
+      - 'cmd/ocr-server/**'
+      - '.github/workflows/ci-ocr.yml'
+  workflow_dispatch:
+
+jobs:
+  ocr-smoke-test:
+    name: Build & Smoke-Test OCR Sidecar
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build OCR Sidecar Image (linux/amd64)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile.ocr
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: scans-ai-filer-ocr:ci-test
+          cache-from: type=gha,scope=ocr-ci
+          cache-to: type=gha,scope=ocr-ci,mode=max
+
+      - name: Verify Tesseract & English Language Data
+        run: |
+          docker run --rm --entrypoint tesseract scans-ai-filer-ocr:ci-test --version
+          docker run --rm --entrypoint tesseract scans-ai-filer-ocr:ci-test --list-langs | grep -qx 'eng'
+
+      - name: Smoke-Test OCR HTTP Endpoints (/healthz, /ocr, /ocr/pdf)
+        run: |
+          docker run -d --name ocr-ci-test -p 127.0.0.1:8085:8085 scans-ai-filer-ocr:ci-test
+
+          # Wait for /healthz
+          for i in $(seq 1 15); do
+            if curl -sf http://127.0.0.1:8085/healthz | grep -qx 'ok'; then
+              echo "/healthz OK"
+              break
+            fi
+            if [ "$i" -eq 15 ]; then
+              echo "OCR sidecar failed to become healthy"
+              exit 1
+            fi
+            sleep 1
+          done
+
+          # Generate a minimal valid 100x40 grayscale PNG using Python stdlib
+          python3 - <<'EOF'
+          import struct, zlib
+
+          def chunk(tag, data):
+              return struct.pack("!I", len(data)) + tag + data + struct.pack("!I", zlib.crc32(tag + data) & 0xffffffff)
+
+          w, h = 100, 40
+          raw = b"".join(b"\x00" + b"\xff" * w for _ in range(h))
+          png = (
+              b"\x89PNG\r\n\x1a\n"
+              + chunk(b"IHDR", struct.pack("!IIBBBBB", w, h, 8, 0, 0, 0, 0))
+              + chunk(b"IDAT", zlib.compress(raw))
+              + chunk(b"IEND", b"")
+          )
+          with open("/tmp/ocr-smoke.png", "wb") as f:
+              f.write(png)
+          EOF
+
+          # Test POST /ocr
+          OCR_RESP=$(curl -sf -X POST --data-binary @/tmp/ocr-smoke.png http://127.0.0.1:8085/ocr)
+          echo "/ocr response: $OCR_RESP"
+          echo "$OCR_RESP" | python3 -c 'import json, sys; d = json.load(sys.stdin); assert "text" in d, d'
+
+          # Test POST /ocr/pdf
+          curl -sf -X POST --data-binary @/tmp/ocr-smoke.png -o /tmp/ocr-smoke.pdf http://127.0.0.1:8085/ocr/pdf
+          head -c 5 /tmp/ocr-smoke.pdf | grep -qx '%PDF-'
+          echo "/ocr/pdf OK ($(wc -c < /tmp/ocr-smoke.pdf) bytes)"
+
+      - name: Cleanup OCR Container
+        if: always()
+        run: |
+          if [ "${{ job.status }}" != "success" ]; then
+            docker logs ocr-ci-test || true
+          fi
+          docker rm -f ocr-ci-test || true
